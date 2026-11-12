@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Сканер ожини</title>
+  <meta name="description" content="Орієнтовна оцінка якості партії ожини за фото лотка. Фото обробляються на пристрої.">
+  <meta name="theme-color" content="#4a1d5e">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" type="image/png" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <img src="icons/icon-192.png" alt="" width="32" height="32">
+    <h1>Сканер ожини</h1>
+    <span class="chip chip-demo">демо</span>
+  </header>
+
+  <div id="update-bar" class="update-bar" hidden>
+    <span>Доступна нова версія.</span>
+    <button id="btn-update" type="button">Оновити</button>
+  </div>
+
+  <main>
+    <!-- Нова партія -->
+    <section id="view-new" class="view">
+      <h2>Нова партія</h2>
+      <p class="muted">Знімайте лоток зверху, щоб ягоди займали майже весь кадр. Без спалаху, при рівному світлі.</p>
+
+      <label class="btn primary big" for="in-camera">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Z"/></svg>
+        Зробити фото
+      </label>
+      <input id="in-camera" class="sr" type="file" accept="image/*" capture="environment">
+
+      <label class="btn big" for="in-gallery">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 13 4.5-5.5 3.2 3.9 2.3-2.9L20 17H4Zm11.5-7.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3Z"/></svg>
+        Вибрати з галереї
+      </label>
+      <input id="in-gallery" class="sr" type="file" accept="image/*" multiple>
+
+      <button id="btn-demo" class="btn-text" type="button">Спробувати на демо-фото</button>
+
+      <div id="thumbs" class="thumbs" hidden></div>
+
+      <details class="card details">
+        <summary>Дані партії <span class="muted">(необов'язково)</span></summary>
+        <label class="field">Номер партії <input id="m-batch" type="text" autocomplete="off" maxlength="40"></label>
+        <label class="field">Постачальник <input id="m-supplier" type="text" autocomplete="off" maxlength="80"></label>
+        <label class="field">Оператор <input id="m-operator" type="text" autocomplete="off" maxlength="60"></label>
+        <label class="field">Примітка <textarea id="m-note" rows="2" maxlength="300"></textarea></label>
+      </details>
+
+      <button id="btn-analyze" class="btn primary big" type="button" disabled>Оцінити партію</button>
+    </section>
+
+    <!-- Результат -->
+    <section id="view-result" class="view" hidden>
+      <div class="row-between">
+        <button id="res-back" class="btn-text" type="button">‹ Назад</button>
+        <span id="res-date" class="muted"></span>
+      </div>
+
+      <div id="res-verdict" class="verdict"></div>
+      <div id="res-review" class="review" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 1 21h22L12 2Zm1 15h-2v2h2v-2Zm0-7h-2v5h2v-5Z"/></svg>
+        Потрібна перевірка людиною
+      </div>
+      <div id="res-corrected" class="card corrected" hidden></div>
+
+      <div class="card">
+        <div id="res-mode" class="seg" role="tablist">
+          <button type="button" data-mode="classes" class="on">Категорії</button>
+          <button type="button" data-mode="heat">Теплова карта</button>
+          <button type="button" data-mode="photo">Фото</button>
+        </div>
+        <div class="viewer">
+          <canvas id="res-canvas"></canvas>
+          <div id="res-roi-hint" class="roi-hint" hidden>Обведіть пальцем прямокутник, у якому лише ягоди</div>
+        </div>
+        <div id="res-pager" class="pager" hidden>
+          <button id="res-prev" type="button" aria-label="Попереднє фото">‹</button>
+          <span id="res-page"></span>
+          <button id="res-next" type="button" aria-label="Наступне фото">›</button>
+        </div>
+        <div class="row">
+          <button id="res-roi" class="btn small" type="button">Уточнити зону</button>
+          <button id="res-roi-auto" class="btn small" type="button" hidden>Повернути авто-зону</button>
+        </div>
+        <p id="res-overlay-note" class="note" hidden></p>
+      </div>
+
+      <div class="card">
+        <h3>Склад партії</h3>
+        <p class="muted">Орієнтовно, за видимою поверхнею. Натисніть на рядок, щоб сховати категорію на фото.</p>
+        <div id="res-table" class="cats"></div>
+        <p id="res-spots" class="note"></p>
+        <p class="note">Це частка площі на фото, а не маси чи кількості ягід. Пліснява — нижня оцінка: тонкий сірий наліт програма не відрізняє від відблиску.</p>
+      </div>
+
+      <div id="res-conf" class="card"></div>
+
+      <div class="actions">
+        <button id="res-pdf" class="btn primary big" type="button">PDF-звіт</button>
+        <button id="res-correct" class="btn big" type="button">Виправити результат</button>
+        <button id="res-new" class="btn big" type="button">Нова партія</button>
+      </div>
+    </section>
+
+    <!-- Виправлення -->
+    <section id="view-correct" class="view" hidden>
+      <h2>Виправити результат</h2>
+      <p class="muted">Вкажіть, що бачите ви. Фото і ваше виправлення збережуться на цьому пристрої — вони знадобляться, щоб навчити програму.</p>
+      <div id="cor-fields" class="card"></div>
+      <div class="card">
+        <h3>Вердикт</h3>
+        <div id="cor-verdict" class="radios"></div>
+      </div>
+      <label class="field card">Коментар <textarea id="cor-comment" rows="3" maxlength="500" placeholder="Наприклад: пліснява лише в одному кутку"></textarea></label>
+      <div class="actions">
+        <button id="cor-save" class="btn primary big" type="button">Зберегти виправлення</button>
+        <button id="cor-remove" class="btn big" type="button" hidden>Прибрати виправлення</button>
+        <button id="cor-cancel" class="btn big" type="button">Скасувати</button>
+      </div>
+    </section>
+
+    <!-- Історія -->
+    <section id="view-history" class="view" hidden>
+      <h2>Історія партій</h2>
+      <p id="hist-info" class="muted"></p>
+      <div id="hist-list" class="hist"></div>
+      <div class="actions">
+        <button id="hist-export" class="btn big" type="button">Експортувати все у файл (ZIP)</button>
+      </div>
+      <p class="note">Історія зберігається лише в цьому браузері на цьому пристрої. Експорт містить фото, результати й виправлення — для резервної копії та майбутнього навчання.</p>
+    </section>
+
+    <!-- Налаштування -->
+    <section id="view-settings" class="view" hidden>
+      <h2>Налаштування</h2>
+      <div id="set-body"></div>
+      <div class="actions">
+        <button id="set-reset" class="btn big" type="button">Скинути до демо-значень</button>
+      </div>
+      <div class="card">
+        <h3>Дані на пристрої</h3>
+        <p id="set-storage" class="muted"></p>
+        <button id="set-clear" class="btn small danger" type="button">Видалити всю історію</button>
+      </div>
+      <div class="card">
+        <h3>Про програму</h3>
+        <p id="set-about" class="muted"></p>
+        <p class="note">Фото обробляються в браузері й нікуди не надсилаються. Оцінка орієнтовна і не є лабораторним висновком.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs" aria-label="Розділи">
+    <button type="button" data-view="new" class="on">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Z"/></svg>
+      Нова партія
+    </button>
+    <button type="button" data-view="history">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-2.05-4.95L14 10h7V3l-2.62 2.62A8.96 8.96 0 0 0 12 3Zm-1 5v5l4.2 2.5.8-1.3-3.5-2.1V8H11Z"/></svg>
+      Історія
+    </button>
+    <button type="button" data-view="settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m19.4 13 .1-1-.1-1 2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3.2h-4l-.4 2.7c-.6.2-1.2.6-1.7 1l-2.5-1-2 3.5L6.6 11l-.1 1 .1 1-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.8 1.7 1l.4 2.7h4l.4-2.7c.6-.2 1.2-.6 1.7-1l2.5 1 2-3.5-2.3-1.6ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
+      Налаштування
+    </button>
+  </nav>
+
+  <div id="busy" class="busy" hidden><div class="spinner"></div><p id="busy-text"></p></div>
+  <div id="toast" class="toast" hidden></div>
+
+  <!-- Звичайні скрипти (не модулі): так сторінка працює і як локальний файл без сервера. -->
+  <script src="vendor/jspdf.umd.min.js"></script>
+  <script src="vendor/fflate.umd.js"></script>
+  <script src="vendor/fonts/NotoSans-Regular.js"></script>
+  <script src="vendor/fonts/NotoSans-Bold.js"></script>
+  <script src="js/core/defaults.js"></script>
+  <script src="js/core/segment.js"></script>
+  <script src="js/core/verdict.js"></script>
+  <script src="js/io/image.js"></script>
+  <script src="js/io/db.js"></script>
+  <script src="js/io/pdf.js"></script>
+  <script src="js/io/export.js"></script>
+  <script src="js/ui/app.js"></script>
+  <script src="js/ui/result.js"></script>
+  <script src="js/ui/history.js"></script>
+  <script src="js/ui/settings.js"></script>
+</body>
+</html>

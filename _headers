@@ -1,0 +1,7 @@
+# Cloudflare Pages: service worker і сторінка мають перевірятися на оновлення щоразу.
+/sw.js
+  Cache-Control: no-cache
+/
+  Cache-Control: no-cache
+/manifest.webmanifest
+  Content-Type: application/manifest+json
