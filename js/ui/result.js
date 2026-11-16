@@ -1,54 +1,70 @@
-/* Екран результату: вердикт, фото з шаром, таблиця, впевненість, PDF, уточнення зони, виправлення. */
+/* Екран результату: вердикт, фото з шаром, таблиця, впевненість, PDF, уточнення зони, оцінка сортувальника. */
 (function () {
   'use strict';
   const BS = window.BS, ui = BS.ui, $ = ui.$, el = ui.el;
   const canvas = $('res-canvas'), viewer = canvas.parentElement;
   let cur = null, idx = 0, mode = 'classes', hidden = {}, backTo = 'new';
-  let selecting = false, start = null, rect = null;
+  let selecting = false, path = null;
 
   ui.openBatch = (batch, from) => {
     cur = ui.current = batch; idx = 0; mode = 'classes'; hidden = {}; backTo = from || 'new';
+    cur.evaluation = BS.normalizeEvaluation(cur.evaluation);
     setSelecting(false);
     render(); ui.show('result');
   };
 
   const rgb = (c) => 'rgb(' + c.join(',') + ')';
   const pct = (v) => BS.fmtPct(v) + ' %';
+  const profileKey = () => (cur.settings && cur.settings.profile) || 'blackberry';
+  const signed = (v) => (v > 0 ? '+' : v < 0 ? '−' : '') + BS.fmtPct(Math.abs(v));
 
   function render() {
-    const ev = cur.evaluation;
-    $('res-date').textContent = BS.fmtDate(cur.createdAt) + (cur.meta.batchNo ? ' · № ' + cur.meta.batchNo : '');
+    const ev = cur.evaluation, pk = profileKey(), prof = BS.PROFILES[pk];
+    $('res-date').textContent = BS.fmtDate(cur.createdAt) + ' · ' + prof.label + (cur.meta.batchNo ? ' · № ' + cur.meta.batchNo : '');
 
     const v = $('res-verdict'); v.className = 'verdict ' + ev.verdict.code; v.textContent = '';
     v.append(el('div', { class: 'cap', text: 'Вердикт за демо-порогами' }), el('div', { class: 'title', text: ev.verdict.label }));
     if (ev.verdict.reasons.length) v.append(el('ul', null, ev.verdict.reasons.map((r) => el('li', { text: r }))));
     $('res-review').hidden = !ev.needsReview;
 
+    // пара «програма — сортувальник»
     const cb = $('res-corrected'), c = cur.correction; cb.hidden = !c; cb.textContent = '';
     if (c) {
-      const changed = BS.CATEGORIES.filter((k) => Math.abs(c.percents[k.key] - BS.round1(ev.percents[k.key])) >= 0.05)
-        .map((k) => el('li', { text: k.label + ': ' + pct(ev.percents[k.key]) + ' → ' + pct(c.percents[k.key]) }));
-      cb.append(el('h3', { text: 'Виправлено оператором' }),
-        el('p', { class: 'muted', text: BS.fmtDate(c.at) }),
-        el('p', { style: 'margin-top:8px;font-weight:650', text: 'Вердикт оператора: ' + BS.VERDICTS[c.verdict].label }),
-        changed.length ? el('ul', { class: 'issues' }, changed) : el('p', { class: 'muted', text: 'Частки без змін.' }),
+      const hp = BS.normalizePercents(c.percents);
+      ui.fill(cb, el('h3', { text: 'Оцінка сортувальника' }),
+        el('p', { class: 'muted', text: BS.fmtDate(c.at) + (c.by ? ' · ' + c.by : '') }),
+        el('div', { class: 'cmp' },
+          el('span', { class: 'h' }), el('span', { class: 'h', text: 'Програма' }), el('span', { class: 'h', text: 'Людина' }), el('span', { class: 'h', text: 'Різниця' }),
+          BS.CATEGORIES.map((k) => {
+            const d = BS.round1(ev.percents[k.key]) - hp[k.key];
+            const cls = Math.abs(d) < 0.05 ? '' : (k.key === 'mold' && d < 0 ? ' miss' : ' diff');
+            return [el('span', { class: 'n', text: BS.categoryLabel(k.key, pk) }), el('span', { text: pct(ev.percents[k.key]) }),
+              el('span', { text: pct(hp[k.key]) }), el('span', { class: 'd' + cls, text: signed(d) })];
+          })),
+        hp.mold - ev.percents.mold >= 0.5 ? el('p', { class: 'miss-note', text: 'Програма недооцінила плісняву на ' + BS.fmtPct(hp.mold - ev.percents.mold) + ' п.п.' }) : null,
+        el('p', { style: 'margin-top:8px;font-weight:650', text: 'Вердикт сортувальника: ' + BS.VERDICTS[c.verdict].label + (c.verdict === ev.verdict.code ? ' — збігається' : ' — не збігається з програмою') }),
         c.comment ? el('p', { style: 'margin-top:8px', text: '«' + c.comment + '»' }) : null);
     }
-    $('res-correct').textContent = c ? 'Змінити виправлення' : 'Виправити результат';
+    $('res-correct').textContent = c ? 'Змінити оцінку сортувальника' : 'Оцінка сортувальника';
 
     const tb = $('res-table'); tb.textContent = '';
-    BS.CATEGORIES.forEach((k) => {
-      const val = ev.percents[k.key];
-      tb.append(el('button', {
-        type: 'button', class: 'cat' + (hidden[k.key] ? ' off' : ''), 'aria-pressed': hidden[k.key] ? 'false' : 'true',
-        onclick: () => { hidden[k.key] = !hidden[k.key]; if (mode === 'photo') setMode('classes'); render(); }
-      },
-        el('span', { class: 'sw', style: 'background:' + rgb(k.color) }),
-        el('span', { class: 'name', text: k.label }),
-        el('span', { class: 'pct', text: pct(val) }),
-        el('span', { class: 'bar' }, el('i', { style: 'width:' + Math.min(100, val) + '%;background:' + rgb(k.color) }))));
-    });
-    $('res-spots').textContent = 'Недостиглі разом (червоні + зелені): ' + pct(ev.unripe) + '. Знайдено плям плісняви: ' + ev.moldSpots + '.';
+    const row = (key, label, color, val, text) => el('button', {
+      type: 'button', class: 'cat' + (hidden[key] ? ' off' : '') + (key === 'other' ? ' other' : ''), 'aria-pressed': hidden[key] ? 'false' : 'true',
+      onclick: () => { hidden[key] = !hidden[key]; if (mode === 'photo') setMode('classes'); render(); }
+    },
+      el('span', { class: 'sw', style: 'background:' + rgb(color) }),
+      el('span', { class: 'name', text: label }),
+      el('span', { class: 'pct', text: text }),
+      el('span', { class: 'bar' }, el('i', { style: 'width:' + Math.min(100, val) + '%;background:' + rgb(color) })));
+    BS.CATEGORIES.forEach((k) => tb.append(row(k.key, BS.categoryLabel(k.key, pk), k.color, ev.percents[k.key], pct(ev.percents[k.key]))));
+    const other = 100 * (ev.otherFraction || 0);
+    if (other >= 0.05) tb.append(row('other', BS.OTHER.label + ' — у склад не входить', BS.OTHER.color, other, pct(other) + ' зони'));
+
+    const res = cur.photos[idx].result || {}, method = res.method || 'color';
+    $('res-spots').textContent = 'Знайдено плям плісняви: ' + ev.moldSpots + '.' + (method === 'color' ? ' «Пошкоджені» кольоровий метод не визначає — потрібна модель.' : '');
+    $('res-method-note').textContent = 'Спосіб: ' + BS.modeLabel(method).toLowerCase() + (res.modelVersion ? ' (' + res.modelVersion + ')' : '') + '.' +
+      (res.fallback ? ' ' + res.fallback + '.' : '') +
+      ' Відсотки — частка площі ягід на фото, а не маси чи кількості. Пліснява — нижня оцінка: тонкий сірий наліт програма не відрізняє від відблиску.';
 
     const cf = $('res-conf'); cf.textContent = '';
     cf.append(el('div', { class: 'conf-head' }, el('h3', { text: 'Впевненість' }), el('b', { text: ev.confidence.label + ' · ' + ev.confidence.score + ' зі 100' })),
@@ -59,7 +75,8 @@
 
     $('res-pager').hidden = cur.photos.length < 2;
     $('res-page').textContent = 'Фото ' + (idx + 1) + ' з ' + cur.photos.length;
-    $('res-roi-auto').hidden = !cur.photos[idx].roiRect || selecting;
+    const p = cur.photos[idx];
+    $('res-roi-auto').hidden = !(p.roiPoly || p.roiRect) || selecting;
     const note = $('res-overlay-note'); note.hidden = !cur.overlayNote; note.textContent = cur.overlayNote || '';
     draw();
   }
@@ -67,13 +84,13 @@
   function draw() {
     const p = cur.photos[idx];
     BS.drawAnnotated(canvas, p.canvas, p.result, selecting ? 'photo' : mode, hidden, 1280);
-    if (selecting && rect) {
-      const ctx = canvas.getContext('2d'), x = rect.x0 * canvas.width, y = rect.y0 * canvas.height;
-      const w = (rect.x1 - rect.x0) * canvas.width, h = (rect.y1 - rect.y0) * canvas.height;
-      ctx.fillStyle = 'rgba(0,0,0,.5)';
-      ctx.fillRect(0, 0, canvas.width, y); ctx.fillRect(0, y + h, canvas.width, canvas.height - y - h);
-      ctx.fillRect(0, y, x, h); ctx.fillRect(x + w, y, canvas.width - x - w, h);
-      ctx.lineWidth = Math.max(3, canvas.width / 250); ctx.strokeStyle = '#fff'; ctx.strokeRect(x, y, w, h);
+    if (selecting && path && path.length > 1) {
+      const ctx = canvas.getContext('2d'), W = canvas.width, H = canvas.height;
+      const trace = () => { ctx.moveTo(path[0].x * W, path[0].y * H); for (let i = 1; i < path.length; i++) ctx.lineTo(path[i].x * W, path[i].y * H); ctx.closePath(); };
+      ctx.beginPath(); ctx.rect(0, 0, W, H); trace();
+      ctx.fillStyle = 'rgba(0,0,0,.5)'; ctx.fill('evenodd');
+      ctx.beginPath(); trace();
+      ctx.lineWidth = Math.max(3, W / 250); ctx.lineJoin = 'round'; ctx.strokeStyle = '#fff'; ctx.stroke();
     }
   }
 
@@ -87,21 +104,23 @@
   $('res-back').addEventListener('click', () => ui.show(backTo));
   $('res-new').addEventListener('click', () => ui.show('new'));
 
-  // ---------- ручна зона ----------
+  // ---------- ручна зона: обведення пальцем ----------
   function setSelecting(on) {
-    selecting = on; start = rect = null;
+    selecting = on; path = null;
     viewer.classList.toggle('selecting', on);
     $('res-roi-hint').hidden = !on;
     $('res-roi').textContent = on ? 'Скасувати' : 'Уточнити зону';
-    if (cur) { $('res-roi-auto').hidden = !cur.photos[idx].roiRect || on; draw(); }
+    if (cur) { const p = cur.photos[idx]; $('res-roi-auto').hidden = !(p.roiPoly || p.roiRect) || on; draw(); }
   }
-  async function applyRoi(r) {
+  // poly: [{x,y},…] у частках кадру або null (повернути автоматичну зону)
+  async function applyRoi(poly) {
     const p = cur.photos[idx];
     ui.busy('Перераховую…'); await ui.tick();
     try {
-      p.roiRect = r;
-      ui.runPhoto(p, cur.settings);
+      p.roiPoly = poly; p.roiRect = null;
+      await ui.runPhoto(p, cur.settings);
       cur.evaluation = BS.evaluateBatch(cur.photos.map((x) => x.result), cur.settings);
+      cur.overlayNote = '';
       await ui.persist(cur, false);
     } catch (e) { console.error(e); ui.toast('Не вдалося перерахувати'); }
     ui.busy(false); setSelecting(false); render();
@@ -111,24 +130,28 @@
 
   const clamp01 = (v) => Math.max(0, Math.min(1, v));
   const pos = (e) => { const b = canvas.getBoundingClientRect(); return { x: clamp01((e.clientX - b.left) / b.width), y: clamp01((e.clientY - b.top) / b.height) }; };
+  const polyArea = (pts) => { let a = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) a += (pts[j].x + pts[i].x) * (pts[j].y - pts[i].y); return Math.abs(a) / 2; };
+  // Не більше ~150 точок: цього досить для будь-якого контуру, а запис в історії лишається малим.
+  const thin = (pts) => { const k = Math.ceil(pts.length / 150); return pts.filter((_, i) => i % k === 0).map((q) => ({ x: Math.round(q.x * 1000) / 1000, y: Math.round(q.y * 1000) / 1000 })); };
+
   canvas.addEventListener('pointerdown', (e) => {
     if (!selecting) return;
-    e.preventDefault(); start = pos(e); rect = null;
+    e.preventDefault(); path = [pos(e)];
     try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* не критично: без захоплення теж працює */ }
   });
   canvas.addEventListener('pointermove', (e) => {
-    if (!selecting || !start) return;
-    const p = pos(e);
-    rect = { x0: Math.min(start.x, p.x), y0: Math.min(start.y, p.y), x1: Math.max(start.x, p.x), y1: Math.max(start.y, p.y) };
-    draw();
+    if (!selecting || !path) return;
+    const q = pos(e), last = path[path.length - 1];
+    if (Math.hypot(q.x - last.x, q.y - last.y) < 0.006) return;
+    path.push(q); draw();
   });
   canvas.addEventListener('pointerup', () => {
-    if (!selecting || !start) return;
-    start = null;
-    if (!rect || (rect.x1 - rect.x0) * (rect.y1 - rect.y0) < 0.03) { rect = null; draw(); ui.toast('Зона замала — обведіть більший прямокутник'); return; }
-    applyRoi(rect);
+    if (!selecting || !path) return;
+    const pts = path; path = null;
+    if (pts.length < 6 || polyArea(pts) < 0.03) { draw(); ui.toast('Зона замала — обведіть більшу ділянку'); return; }
+    applyRoi(thin(pts));
   });
-  canvas.addEventListener('pointercancel', () => { start = rect = null; if (selecting) draw(); });
+  canvas.addEventListener('pointercancel', () => { path = null; if (selecting) draw(); });
 
   // ---------- PDF ----------
   ui.makePdfBlob = async () => {
@@ -146,7 +169,7 @@
     ui.busy(false);
   });
 
-  // ---------- виправлення ----------
+  // ---------- оцінка сортувальника (режим перевірки) ----------
   const EDITABLE = BS.CATEGORIES.filter((k) => k.key !== 'good');
   let vals = {};
 
@@ -159,11 +182,12 @@
   }
 
   $('res-correct').addEventListener('click', () => {
-    const src = cur.correction ? cur.correction.percents : cur.evaluation.percents;
+    const pk = profileKey(), ev = cur.evaluation;
+    const src = cur.correction ? BS.normalizePercents(cur.correction.percents) : ev.percents;
     const box = $('cor-fields'); box.textContent = '';
     const good = BS.CATEGORIES[0];
     box.append(el('div', { class: 'stepper auto', id: 'cor-good' },
-      el('span', { class: 'name' }, el('span', { class: 'sw', style: 'background:' + rgb(good.color) }), good.label + ' — решта'),
+      el('span', { class: 'name' }, el('span', { class: 'sw', style: 'background:' + rgb(good.color) }), BS.categoryLabel('good', pk) + ' — решта'),
       el('span', { class: 'val' })));
     EDITABLE.forEach((k) => {
       vals[k.key] = BS.round1(src[k.key]);
@@ -171,14 +195,15 @@
       const set = (v) => { vals[k.key] = BS.round1(Math.max(0, Math.min(100, isFinite(v) ? v : 0))); input.value = vals[k.key]; updateGood(); };
       input.addEventListener('change', () => set(parseFloat(String(input.value).replace(',', '.'))));
       box.append(el('div', { class: 'stepper' },
-        el('span', { class: 'name' }, el('span', { class: 'sw', style: 'background:' + rgb(k.color) }), k.label + ', %'),
+        el('span', { class: 'name' }, el('span', { class: 'sw', style: 'background:' + rgb(k.color) }), BS.categoryLabel(k.key, pk) + ', %',
+          el('span', { class: 'prog', text: 'програма: ' + pct(ev.percents[k.key]) })),
         el('button', { type: 'button', 'aria-label': 'Менше: ' + k.label, text: '−', onclick: () => set(vals[k.key] - 0.5) }),
         input,
         el('button', { type: 'button', 'aria-label': 'Більше: ' + k.label, text: '+', onclick: () => set(vals[k.key] + 0.5) })));
     });
     updateGood();
 
-    const chosen = cur.correction ? cur.correction.verdict : cur.evaluation.verdict.code;
+    const chosen = cur.correction ? cur.correction.verdict : ev.verdict.code;
     const vb = $('cor-verdict'); vb.textContent = '';
     ['freeze', 'process', 'reject'].forEach((code) => vb.append(el('label', null,
       el('input', { type: 'radio', name: 'cor-verdict', value: code, checked: code === chosen }), BS.VERDICTS[code].label)));
@@ -198,8 +223,8 @@
     if (!picked) return ui.toast('Оберіть вердикт');
     const percents = { good: updateGood() };
     EDITABLE.forEach((k) => { percents[k.key] = vals[k.key]; });
-    saveCorrection({ at: Date.now(), percents, verdict: picked.value, comment: $('cor-comment').value.trim() }, 'Виправлення збережено на пристрої');
+    saveCorrection({ at: Date.now(), by: (cur.meta && cur.meta.operator) || '', percents, verdict: picked.value, comment: $('cor-comment').value.trim() }, 'Оцінку сортувальника збережено на пристрої');
   });
-  $('cor-remove').addEventListener('click', () => saveCorrection(null, 'Виправлення прибрано'));
+  $('cor-remove').addEventListener('click', () => saveCorrection(null, 'Оцінку сортувальника прибрано'));
   $('cor-cancel').addEventListener('click', () => ui.show('result'));
 })();

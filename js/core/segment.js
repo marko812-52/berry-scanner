@@ -1,22 +1,25 @@
 /*
- * Сегментація v0: колір (HSV) + зона ягід + фільтр бліків за розміром плями.
+ * Кольоровий метод (HSV) v1: зона ягід + класи за кольором + розбір білих плям (пліснява / блик / фон).
  * Чисті функції над масивами пікселів, без DOM. Вхід — RGBA, вихід — карта класів і статистика.
  *
  * Послідовність:
  *   1) зменшення до analysisSize;
  *   2) баланс білого за нейтральними світлими пікселями (стіна, блики);
- *   3) зона ягід на грубій сітці (стіна і пліснява мають однаковий колір, тому
- *      спершу шукаємо темну масу ягід і лише всередині неї класифікуємо);
- *   4) класифікація пікселів, 5) відсів дрібних плям, 6) статистика.
+ *   3) зона ягід: автоматично (маса «схожих на ягоду» пікселів на грубій сітці) або обведена вручну;
+ *      біла стіна і біла пліснява мають однаковий колір, тому класи шукаємо лише всередині зони;
+ *   4) класифікація пікселів за правилами профілю ягоди;
+ *   5) кожна біла пляма окремо: пліснява, блик чи фон — за розміром, оточенням, гладкістю й різкістю краю;
+ *   6) відсів дрібних кольорових цяток, статистика.
  */
 (function (root) {
   'use strict';
   var BS = (root.BS = root.BS || {});
   if (typeof module !== 'undefined' && module.exports && !BS.CLASSES) require('./defaults.js');
   var C = BS.CLASSES;
-  var WHITE = 6;            // тимчасовий клас: світле нейтральне (пліснява або блик)
-  var WEAK_RED = 7;         // тимчасовий клас: темно-червоне, рахується лише поруч із впевнено червоним
-  var REF_MEDIAN_V = 0.17;  // типова медіана яскравості зони темних ягід (за зразком)
+  // тимчасові класи (у результат не потрапляють)
+  var WHITE = 100;          // світле нейтральне: пліснява, блик або фон — вирішується по плямах
+  var WEAK = 101;           // слабкий кандидат у «недостиглі»: рахується лише поруч із впевненим
+  var GLARE = 102;          // блик: після розбору плям стає «якісною» ягодою
 
   function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
@@ -61,14 +64,14 @@
   // ---------- 2. Баланс білого ----------
   // Нейтральні світлі пікселі (стіна, пліснява, дзеркальні блики) відбивають колір лампи,
   // тож за ними можна оцінити відтінок освітлення. Корекція обмежена, щоб не нашкодити.
-  function whiteBalance(data, n) {
+  function whiteBalance(data, n, satMax) {
     var sr = 0, sg = 0, sb = 0, cnt = 0, i, p, r, g, b, mx, mn;
     for (i = 0; i < n; i++) {
       p = i * 4; r = data[p]; g = data[p + 1]; b = data[p + 2];
       mx = r > g ? (r > b ? r : b) : (g > b ? g : b);
       if (mx < 150 || mx > 250) continue;
       mn = r < g ? (r < b ? r : b) : (g < b ? g : b);
-      if ((mx - mn) > 0.25 * mx) continue;
+      if ((mx - mn) > satMax * mx) continue;
       sr += r; sg += g; sb += b; cnt++;
     }
     var info = { applied: false, gainR: 1, gainB: 1, clamped: false, refFraction: cnt / n };
@@ -179,33 +182,193 @@
     return o;
   }
 
+  // ---------- 4. Зона ягід ----------
+  // Ручна зона: багатокутник (обведення пальцем) у частках кадру → маска пікселів.
+  BS.rasterPolygon = function (points, w, h) {
+    var mask = new Uint8Array(w * h), n = points.length, xs = [], y, i, j, k;
+    if (n < 3) return mask;
+    for (y = 0; y < h; y++) {
+      var py = y + 0.5; xs.length = 0;
+      for (i = 0, j = n - 1; i < n; j = i++) {
+        var ay = points[i].y * h, by = points[j].y * h;
+        if ((ay > py) !== (by > py)) xs.push(points[i].x * w + (py - ay) / (by - ay) * (points[j].x * w - points[i].x * w));
+      }
+      xs.sort(function (a, b) { return a - b; });
+      for (k = 0; k + 1 < xs.length; k += 2) {
+        var x0 = Math.max(0, Math.ceil(xs[k] - 0.5)), x1 = Math.min(w - 1, Math.floor(xs[k + 1] - 0.5));
+        for (var x = x0; x <= x1; x++) mask[y * w + x] = 1;
+      }
+    }
+    return mask;
+  };
+
+  function isSeed(seed, h, s, v, darkT) {
+    if (seed.dark && v < darkT) return true;
+    return inHue(h, seed.hue[0], seed.hue[1]) && s >= seed.satMin && v < seed.valMax;
+  }
+
+  // Автоматична зона: маса «схожих на ягоду» пікселів на грубій сітці.
+  // Гладкі ділянки того самого кольору (темний стіл, тінь, чорний пластик) відсіюються за текстурою:
+  // маса ягід завжди рясніє дрібними перепадами яскравості.
+  function autoZone(H, S, V, crate, w, h, cell, seed, darkT) {
+    var gw = Math.ceil(w / cell), gh = Math.ceil(h / cell), gn = gw * gh;
+    var seedCnt = new Uint16Array(gn), cellCnt = new Uint16Array(gn), tex = new Float32Array(gn), x, y, i, gi;
+    for (y = 0; y < h; y++) {
+      var gy = ((y / cell) | 0) * gw;
+      for (x = 0; x < w; x++) {
+        i = y * w + x; gi = gy + ((x / cell) | 0);
+        cellCnt[gi]++;
+        if (x > 0 && y > 0 && x < w - 1 && y < h - 1) tex[gi] += Math.abs(4 * V[i] - V[i - 1] - V[i + 1] - V[i - w] - V[i + w]);
+        if (!crate[i] && isSeed(seed, H[i], S[i], V[i], darkT)) seedCnt[gi]++;
+      }
+    }
+    var grid = new Uint8Array(gn), vals = [];
+    for (gi = 0; gi < gn; gi++) {
+      grid[gi] = seedCnt[gi] >= 0.35 * cellCnt[gi] ? 1 : 0;
+      tex[gi] /= cellCnt[gi] || 1;
+      if (grid[gi]) vals.push(tex[gi]);
+    }
+    if (vals.length > 8) {
+      vals.sort(function (a, b) { return a - b; });
+      var texMin = 0.2 * vals[Math.floor(vals.length * 0.75)];
+      for (gi = 0; gi < gn; gi++) if (grid[gi] && tex[gi] < texMin) grid[gi] = 0;
+    }
+    grid = erode(dilate(grid, gw, gh, 3), gw, gh, 3);   // змикання: закриває плями плісняви, недостиглі ягоди
+    grid = largestComponent(grid, gw, gh);
+    grid = fillHoles(grid, gw, gh);
+    grid = erode(grid, gw, gh, 1);                      // відступ від стіни/лотка
+    var zone = new Uint8Array(w * h);
+    for (y = 0; y < h; y++) {
+      var gy2 = ((y / cell) | 0) * gw;
+      for (x = 0; x < w; x++) zone[y * w + x] = grid[gy2 + ((x / cell) | 0)];
+    }
+    return zone;
+  }
+
   // ---------- 5. Зв'язні плями на рівні пікселів ----------
   // Плями класу target площею >= minArea стають keepAs, менші — dropAs.
-  // Якщо задано inside (маска зони ягід), пляма, що помітно межує із зовнішнім (стіна, лоток),
-  // вважається тлом і стає OUT: біле на межі зони не відрізнити від стіни.
-  function filterComponents(labels, w, h, target, minArea, keepAs, dropAs, queue, inside) {
-    var TMP = 255, KEEP = 128 | keepAs, n = w * h, kept = 0, dropped = 0, maxArea = 0, edgePx = 0, i, j;
+  function filterComponents(labels, w, h, target, minArea, keepAs, dropAs, queue) {
+    var TMP = 255, KEEP = 128 | keepAs, n = w * h, i, j;
     for (i = 0; i < n; i++) {
       if (labels[i] !== target) continue;
-      var head = 0, tail = 0, touch = 0; queue[tail++] = i; labels[i] = TMP;
+      var head = 0, tail = 0; queue[tail++] = i; labels[i] = TMP;
       while (head < tail) {
-        var p = queue[head++], x = p % w, y = (p - x) / w, t = 0;
+        var p = queue[head++], x = p % w, y = (p - x) / w;
         var x0 = x > 0 ? -1 : 0, x1 = x < w - 1 ? 1 : 0, y0 = y > 0 ? -1 : 0, y1 = y < h - 1 ? 1 : 0;
         for (var dy = y0; dy <= y1; dy++) for (var dx = x0; dx <= x1; dx++) {
           var q = p + dy * w + dx;
           if (labels[q] === target) { labels[q] = TMP; queue[tail++] = q; }
-          else if (inside && !inside[q]) t = 1;
         }
-        touch += t;
       }
-      var out;
-      if (inside && touch >= 3 && touch >= 0.08 * tail) { out = 0; edgePx += tail; }
-      else if (tail >= minArea) { out = KEEP; kept++; if (tail > maxArea) maxArea = tail; }
-      else { out = dropAs; dropped += tail; }
+      var out = tail >= minArea ? KEEP : dropAs;
       for (j = 0; j < tail; j++) labels[queue[j]] = out;
     }
     for (i = 0; i < n; i++) if (labels[i] & 128) labels[i] &= 127;
-    return { kept: kept, droppedPx: dropped, maxArea: maxArea, edgePx: edgePx };
+  }
+
+  /*
+   * Білі (світлі нейтральні) плями: пліснява, блик чи фон?
+   * Колір у них однаковий, тому дивимось на форму й оточення кожної плями:
+   *   - торкається краю зони або межує з лотком/стіною     → поза зоною (OUT);
+   *   - дуже мала                                           → блик (рахується як ягода);
+   *   - надто велика, або навколо мало ягід                 → фон / інше (OTHER);
+   *   - дуже яскрава з різким краєм і невелика              → блик;
+   *   - усередині гладка, як папір чи пластик               → фон / інше;
+   *   - решта: нерівна, з м'якшим краєм, серед ягід         → пліснява.
+   * V — яскравість 0..1 (після балансу білого, без вирівнювання експозиції).
+   */
+  function classifyWhiteSpots(labels, w, h, V, inside, zonePx, minSpot, sp, scale, queue, debug) {
+    var n = w * h, TMP = 255, stamp = new Int32Array(n), ringQ = new Int32Array(n), id = 0, i, j;
+    var R = Math.max(2, Math.round(sp.ring * scale));
+    var st = { mold: 0, moldPx: 0, maxMold: 0, glarePx: 0, otherPx: 0, edgePx: 0, spots: debug ? [] : null };
+    for (i = 0; i < n; i++) {
+      if (labels[i] !== WHITE) continue;
+      id++;
+      var head = 0, tail = 0, touch = 0, sumV = 0, border = 0;
+      queue[tail++] = i; labels[i] = TMP;
+      while (head < tail) {
+        var p = queue[head++], x = p % w, y = (p - x) / w, t = 0;
+        var x0 = x > 0 ? -1 : 0, x1 = x < w - 1 ? 1 : 0, y0 = y > 0 ? -1 : 0, y1 = y < h - 1 ? 1 : 0;
+        if (x0 === 0 || x1 === 0 || y0 === 0 || y1 === 0) border++;
+        for (var dy = y0; dy <= y1; dy++) for (var dx = x0; dx <= x1; dx++) {
+          var q = p + dy * w + dx;
+          if (labels[q] === WHITE) { labels[q] = TMP; queue[tail++] = q; }
+          else if (!inside[q]) t = 1;
+        }
+        touch += t; sumV += V[p];
+      }
+      var area = tail, meanV = sumV / area;
+
+      // край плями (різкість) і її нутрощі (гладкість)
+      var gB = 0, nB = 0, gI = 0, nI = 0;
+      for (j = 0; j < area; j++) {
+        p = queue[j]; x = p % w; y = (p - x) / w;
+        if (x < 1 || y < 1 || x > w - 2 || y > h - 2) continue;
+        var gx = (V[p + 1] - V[p - 1]) * 0.5, gy = (V[p + w] - V[p - w]) * 0.5, g = Math.sqrt(gx * gx + gy * gy);
+        if (labels[p - 1] !== TMP || labels[p + 1] !== TMP || labels[p - w] !== TMP || labels[p + w] !== TMP) { gB += g; nB++; }
+        else if (labels[p - w - 1] === TMP && labels[p - w + 1] === TMP && labels[p + w - 1] === TMP && labels[p + w + 1] === TMP) { gI += g; nI++; }
+      }
+
+      // кільце навколо плями: що її оточує
+      var rHead = 0, rTail = 0, nBerry = 0, nOut = border * R, nWhite = 0, sumRing = 0;
+      for (j = 0; j < area; j++) { stamp[queue[j]] = id; ringQ[rTail++] = queue[j]; }
+      for (var layer = 0; layer < R; layer++) {
+        var end = rTail;
+        for (; rHead < end; rHead++) {
+          p = ringQ[rHead]; x = p % w; y = (p - x) / w;
+          for (var d = 0; d < 4; d++) {
+            if (d === 0) { if (x === 0) continue; q = p - 1; }
+            else if (d === 1) { if (x === w - 1) continue; q = p + 1; }
+            else if (d === 2) { if (y === 0) continue; q = p - w; }
+            else { if (y === h - 1) continue; q = p + w; }
+            if (stamp[q] === id) continue;
+            stamp[q] = id; ringQ[rTail++] = q;
+            if (!inside[q]) nOut++;
+            else if (labels[q] === WHITE || labels[q] === C.MOLD || labels[q] === C.OTHER || labels[q] === GLARE) nWhite++;
+            else { nBerry++; sumRing += V[q]; }
+          }
+        }
+      }
+      var surround = nBerry / Math.max(1, nBerry + nOut + 0.5 * nWhite);
+      var contrast = meanV - (nBerry ? sumRing / nBerry : 0);
+      var edge = nB ? (gB / nB) / Math.max(0.08, contrast) : 0;
+      var flat = nI >= 8 ? gI / nI : -1;                       // -1: пляма замала, нутрощів немає
+
+      var kind;
+      if (touch >= 3 && touch >= 0.08 * area) kind = 'edge';
+      else if (area < minSpot) kind = 'glare';
+      else if (area > sp.bigFraction * zonePx) kind = 'other';
+      else if (surround < sp.surroundMin) kind = 'other';
+      else if (meanV >= sp.glareV && edge >= sp.glareEdge && area <= sp.glareMaxSpots * minSpot) kind = 'glare';
+      else if (flat >= 0 && flat < sp.flatMax) kind = 'other';
+      else kind = 'mold';
+
+      var out = kind === 'edge' ? C.OUT : kind === 'glare' ? GLARE : kind === 'other' ? C.OTHER : C.MOLD;
+      for (j = 0; j < area; j++) labels[queue[j]] = out;
+      if (kind === 'edge') { st.edgePx += area; for (j = 0; j < area; j++) inside[queue[j]] = 0; }
+      else if (kind === 'glare') st.glarePx += area;
+      else if (kind === 'other') st.otherPx += area;
+      else { st.mold++; st.moldPx += area; if (area > st.maxMold) st.maxMold = area; }
+      if (debug) st.spots.push({ x: i % w, y: (i / w) | 0, area: area, kind: kind, meanV: meanV, edge: edge, flat: flat, surround: surround, contrast: contrast });
+    }
+    for (i = 0; i < n; i++) if (labels[i] === GLARE) labels[i] = C.GOOD;
+
+    // дірочки всередині плям плісняви (темніші волокна, шум): піксель, оточений пліснявою з 5+ боків, теж пліснява
+    var fill = [];
+    for (var yy = 1; yy < h - 1; yy++) for (var xx = 1; xx < w - 1; xx++) {
+      i = yy * w + xx;
+      if (labels[i] === C.MOLD || !inside[i]) continue;
+      var m = 0;
+      if (labels[i - 1] === C.MOLD) m++; if (labels[i + 1] === C.MOLD) m++;
+      if (labels[i - w] === C.MOLD) m++; if (labels[i + w] === C.MOLD) m++;
+      if (m < 2) continue;
+      if (labels[i - w - 1] === C.MOLD) m++; if (labels[i - w + 1] === C.MOLD) m++;
+      if (labels[i + w - 1] === C.MOLD) m++; if (labels[i + w + 1] === C.MOLD) m++;
+      if (m >= 5) fill.push(i);
+    }
+    for (j = 0; j < fill.length; j++) labels[fill[j]] = C.MOLD;
+    st.moldPx += fill.length;
+    return st;
   }
 
   // Гістерезис: впевнені пікселі класу strong «розростаються» на сусідні слабкі кандидати weak.
@@ -240,147 +403,174 @@
         var xx = x + dx, yy = y + dy;
         if (xx >= 0 && yy >= 0 && xx < w && yy < h && core[yy * w + xx]) { ok = 1; break; }
       }
-      if (!ok) labels[i] = rest === cls ? cls : 200;   // 200 — тимчасова позначка «прибрати»
+      if (!ok) labels[i] = 200;                         // 200 — тимчасова позначка «прибрати»
     }
     for (i = 0; i < n; i++) if (labels[i] === 200) labels[i] = rest;
   }
 
+  // Правила профілю → плоскі масиви для швидкого циклу по пікселях.
+  function compileRules(rules) {
+    return rules.map(function (r) {
+      return {
+        cls: r.weak ? WEAK : C[r.cls], h0: r.hue[0], h1: r.hue[1],
+        s0: r.satMin == null ? 0 : r.satMin, s1: r.satMax == null ? 2 : r.satMax,
+        v0: r.valMin == null ? 0 : r.valMin, v1: r.valMax == null ? 2 : r.valMax
+      };
+    });
+  }
+
   // ---------- Головна функція ----------
-  // rgba: Uint8ClampedArray (RGBA), opts.roiRect: {x0,y0,x1,y1} у частках кадру — ручна зона.
+  // rgba: Uint8ClampedArray (RGBA).
+  // opts.roiPoly: [{x,y},…] у частках кадру — зона, обведена вручну; opts.roiRect: {x0,y0,x1,y1} — прямокутна (старі записи).
+  // opts.debug: додати до результату список білих плям з ознаками (для налагодження порогів).
   BS.analyze = function (rgba, srcW, srcH, settings, opts) {
     settings = settings || BS.DEFAULT_SETTINGS;
     opts = opts || {};
-    var cs = settings.color;
+    var prof = BS.profileOf(settings), sp = settings.spot || BS.DEFAULT_SETTINGS.spot;
     var small = BS.resizeRGBA(rgba, srcW, srcH, settings.analysisSize || 1024);
     var w = small.w, h = small.h, n = w * h;
     var data = new Uint8ClampedArray(small.data);     // копія: баланс білого змінює пікселі
-    var wb = whiteBalance(data, n);
+    var wb = whiteBalance(data, n, prof.wbSatMax || 0.25);
 
     var H = new Float32Array(n), S = new Float32Array(n), V = new Float32Array(n);
     toHSV(data, n, H, S, V);
 
     var i, x, y, hist = new Uint32Array(256), histN = 0;
-    var crate = new Uint8Array(n);
+    var crate = new Uint8Array(n), cr = prof.crate;
     for (i = 0; i < n; i++) {
-      if (cs.crateEnabled && S[i] >= cs.crateSatMin && V[i] >= 0.15 && inHue(H[i], cs.crateHueMin, cs.crateHueMax)) { crate[i] = 1; continue; }
+      if (cr.enabled && S[i] >= cr.satMin && V[i] >= cr.valMin && inHue(H[i], cr.hue[0], cr.hue[1])) { crate[i] = 1; continue; }
       hist[(V[i] * 255) | 0]++; histN++;
     }
     var darkT = clamp(otsu(hist, histN), 0.30, 0.50);
 
     // --- зона ягід ---
     var cell = Math.max(4, Math.round(Math.max(w, h) / 128));
-    var gw = Math.ceil(w / cell), gh = Math.ceil(h / cell);
-    var roi, manual = false;
-    if (opts.roiRect) {
+    var zone, manual = false;
+    if (opts.roiPoly && opts.roiPoly.length >= 3) {
+      manual = true; zone = BS.rasterPolygon(opts.roiPoly, w, h);
+    } else if (opts.roiRect) {
       manual = true;
-      roi = new Uint8Array(gw * gh);
       var r = opts.roiRect;
-      for (y = 0; y < gh; y++) for (x = 0; x < gw; x++) {
-        var fx = (x + 0.5) * cell / w, fy = (y + 0.5) * cell / h;
-        roi[y * gw + x] = (fx >= r.x0 && fx <= r.x1 && fy >= r.y0 && fy <= r.y1) ? 1 : 0;
-      }
+      zone = BS.rasterPolygon([{ x: r.x0, y: r.y0 }, { x: r.x1, y: r.y0 }, { x: r.x1, y: r.y1 }, { x: r.x0, y: r.y1 }], w, h);
     } else {
-      var seedCnt = new Uint16Array(gw * gh), cellCnt = new Uint16Array(gw * gh), gi;
-      for (y = 0; y < h; y++) {
-        var gy = ((y / cell) | 0) * gw;
-        for (x = 0; x < w; x++) {
-          i = y * w + x; gi = gy + ((x / cell) | 0);
-          cellCnt[gi]++;
-          if (crate[i]) continue;
-          // «схоже на ягоду»: темне або червонувато-пурпурове
-          if (V[i] < darkT || ((H[i] >= 320 || H[i] <= 12) && S[i] >= 0.2 && V[i] < 0.7)) seedCnt[gi]++;
-        }
-      }
-      var grid = new Uint8Array(gw * gh);
-      for (gi = 0; gi < gw * gh; gi++) grid[gi] = seedCnt[gi] >= 0.35 * cellCnt[gi] ? 1 : 0;
-      grid = erode(dilate(grid, gw, gh, 3), gw, gh, 3);   // змикання: закриває плями плісняви, зелені ягоди
-      grid = largestComponent(grid, gw, gh);
-      grid = fillHoles(grid, gw, gh);
-      roi = erode(grid, gw, gh, 1);                        // відступ від стіни/лотка
+      zone = autoZone(H, S, V, crate, w, h, cell, prof.seed, darkT);
     }
 
-    // --- експозиція: медіана яскравості зони ---
-    var vh = new Uint32Array(256), roiN = 0;
-    for (y = 0; y < h; y++) {
-      var gy2 = ((y / cell) | 0) * gw;
-      for (x = 0; x < w; x++) {
-        i = y * w + x;
-        if (!roi[gy2 + ((x / cell) | 0)] || crate[i]) continue;
-        vh[(V[i] * 255) | 0]++; roiN++;
-      }
+    // --- експозиція: медіана яскравості «тіла ягід» у зоні ---
+    // Лише пікселі, схожі на ягоду: так результат не залежить від того, скільки стіни чи лотка
+    // потрапило в зону, обведену вручну.
+    var vh = new Uint32Array(256), zoneN = 0, bodyN = 0;
+    for (i = 0; i < n; i++) {
+      if (!zone[i] || crate[i]) continue;
+      zoneN++;
+      if (isSeed(prof.seed, H[i], S[i], V[i], darkT)) { vh[(V[i] * 255) | 0]++; bodyN++; }
     }
     var medianV = 0, acc = 0;
-    for (i = 0; i < 256; i++) { acc += vh[i]; if (acc >= roiN / 2) { medianV = i / 255; break; } }
-    var rawGain = medianV > 0 ? REF_MEDIAN_V / medianV : 1;
-    var gain = clamp(rawGain, 0.75, 1.4);
+    for (i = 0; i < 256; i++) { acc += vh[i]; if (acc >= bodyN / 2) { medianV = i / 255; break; } }
+    var rawGain = medianV > 0 ? prof.refV / medianV : 1;
+    var gain = clamp(rawGain, prof.gainMin, prof.gainMax);
 
-    // --- класифікація ---
+    // --- класифікація пікселів ---
     var labels = new Uint8Array(n), inside = new Uint8Array(n), uncertain = 0, clipped = 0;
-    for (y = 0; y < h; y++) {
-      var gy3 = ((y / cell) | 0) * gw;
-      for (x = 0; x < w; x++) {
-        i = y * w + x;
-        if (!roi[gy3 + ((x / cell) | 0)] || crate[i]) continue;      // OUT
-        inside[i] = 1;
-        var hh = H[i], s = S[i], v = V[i] * gain; if (v > 1) v = 1;
-        if (V[i] >= 0.98) clipped++;
-        var lab = C.GOOD;
-        if (s < cs.moldSatMax && v >= cs.moldValMin) lab = WHITE;
-        else if (s >= cs.greenSatMin && v >= cs.greenValMin && inHue(hh, cs.greenHueMin, cs.greenHueMax)) lab = C.GREEN;
-        else if (s >= cs.debrisSatMin && v >= cs.debrisValMin && hh >= cs.debrisHueMin && hh < cs.greenHueMin) lab = C.DEBRIS;
-        else if (s >= cs.redSatMin && v >= cs.redValMin && inHue(hh, cs.redHueMin, cs.redHueMax)) lab = C.RED;
-        else if (s >= cs.redSatMin - 0.04 && v >= cs.redValMin - 0.06 && inHue(hh, cs.redHueMin - 8, cs.redHueMax + 4)) lab = WEAK_RED;
-        else if (s < 0.15 && v >= 0.36) uncertain++;                  // сіре: тонкий наліт чи розсіяний блик — не знаємо
-        labels[i] = lab;
+    var rules = compileRules(prof.rules), nr = rules.length, wh = prof.white, k, rule;
+    var skip = wh.skipHue, hasWeak = rules.some(function (q) { return q.cls === WEAK; });
+    for (i = 0; i < n; i++) {
+      if (!zone[i] || crate[i]) continue;                            // OUT
+      inside[i] = 1;
+      var hh = H[i], s = S[i], v = V[i] * gain; if (v > 1) v = 1;
+      if (V[i] >= 0.98) clipped++;
+      var lab = C.GOOD;
+      if (s < wh.satMax && v >= wh.valMin && !(skip && s >= wh.skipSatMin && inHue(hh, skip[0], skip[1]))) lab = WHITE;
+      else {
+        for (k = 0; k < nr; k++) {
+          rule = rules[k];
+          if (s >= rule.s0 && s < rule.s1 && v >= rule.v0 && v < rule.v1 && inHue(hh, rule.h0, rule.h1)) { lab = rule.cls; break; }
+        }
+        if (lab === C.GOOD && s < 0.15 && v >= 0.36 && prof.seed.dark) uncertain++;   // сіре: тонкий наліт чи розсіяний блик — не знаємо
       }
+      labels[i] = lab;
     }
 
-    // --- плями: блик (дрібне) проти плісняви (більше) ---
-    var scale2 = (Math.max(w, h) / 1024) * (Math.max(w, h) / 1024);
+    // --- білі плями: пліснява, блик чи фон ---
+    var scale = Math.max(w, h) / 1024, scale2 = scale * scale;
     var queue = new Int32Array(n);
-    var mold = filterComponents(labels, w, h, WHITE, Math.max(4, cs.moldMinSpot * scale2), C.MOLD, C.GOOD, queue, inside);
-    var speck = Math.max(3, cs.minSpeck * scale2);
-    filterComponents(labels, w, h, C.RED, speck, C.RED, C.GOOD, queue);
-    growInto(labels, w, h, C.RED, WEAK_RED, C.GOOD, queue);   // темніші краї тієї самої червоної ягоди
-    openClass(labels, w, h, C.RED, C.GOOD);
-    filterComponents(labels, w, h, C.RED, speck, C.RED, C.GOOD, queue);
-    filterComponents(labels, w, h, C.GREEN, speck, C.GREEN, C.GOOD, queue);
+    var spots = classifyWhiteSpots(labels, w, h, V, inside, zoneN, Math.max(4, prof.moldMinSpot * scale2), sp, scale, queue, opts.debug);
+
+    // --- кольорові плями: прибрати шум ---
+    var speck = Math.max(3, prof.minSpeck * scale2);
+    filterComponents(labels, w, h, C.UNRIPE, speck, C.UNRIPE, C.GOOD, queue);
+    if (hasWeak) {
+      growInto(labels, w, h, C.UNRIPE, WEAK, C.GOOD, queue);          // темніші краї тієї самої недостиглої ягоди
+      openClass(labels, w, h, C.UNRIPE, C.GOOD);
+      filterComponents(labels, w, h, C.UNRIPE, speck, C.UNRIPE, C.GOOD, queue);
+    }
     filterComponents(labels, w, h, C.DEBRIS, speck, C.DEBRIS, C.GOOD, queue);
 
-    // --- статистика ---
-    var cnt = [0, 0, 0, 0, 0, 0];
+    // --- статистика: частки рахуються від площі ягід (без «фону / іншого») ---
+    var cnt = [0, 0, 0, 0, 0, 0, 0];
     for (i = 0; i < n; i++) cnt[labels[i]]++;
-    var roiPx = n - cnt[0];
+    var roiPx = n - cnt[0], berryPx = roiPx - cnt[C.OTHER];
     var counts = {}, percents = {};
     BS.CATEGORIES.forEach(function (c) {
       counts[c.key] = cnt[c.id];
-      percents[c.key] = roiPx ? 100 * cnt[c.id] / roiPx : 0;
+      percents[c.key] = berryPx ? 100 * cnt[c.id] / berryPx : 0;
     });
+    counts.other = cnt[C.OTHER];
 
     // різкість: середній модуль лапласіана яскравості в зоні ягід
     var lap = 0, lapN = 0;
     for (y = 1; y < h - 1; y += 2) for (x = 1; x < w - 1; x += 2) {
-      i = y * w + x; if (!labels[i]) continue;
+      i = y * w + x; if (!labels[i] || labels[i] === C.OTHER) continue;
       lap += Math.abs(4 * V[i] - V[i - 1] - V[i + 1] - V[i - w] - V[i + w]); lapN++;
     }
 
-    return {
-      algo: BS.ALGO_VERSION,
+    var res = {
+      algo: BS.ALGO_VERSION, method: 'color', profile: prof.key,
       w: w, h: h, cell: cell, labels: labels,
       counts: counts, percents: percents,
-      roiPx: roiPx, roiFraction: roiPx / n, manualRoi: manual,
-      moldSpots: mold.kept,
-      moldMaxSpotFraction: roiPx ? mold.maxArea / roiPx : 0,
-      glareFraction: roiPx ? mold.droppedPx / roiPx : 0,
-      uncertainFraction: roiPx ? uncertain / roiPx : 0,
+      roiPx: roiPx, berryPx: berryPx,
+      roiFraction: roiPx / n, berryFraction: berryPx / n, otherFraction: roiPx ? cnt[C.OTHER] / roiPx : 0,
+      manualRoi: manual,
+      moldSpots: spots.mold,
+      moldMaxSpotFraction: berryPx ? spots.maxMold / berryPx : 0,
+      glareFraction: berryPx ? spots.glarePx / berryPx : 0,
+      uncertainFraction: berryPx ? uncertain / berryPx : 0,
       quality: {
-        medianV: medianV, gain: gain, gainClamped: gain !== rawGain,
+        medianV: medianV, refV: prof.refV, gain: gain, gainClamped: gain !== rawGain,
         clipped: roiPx ? clipped / roiPx : 0,
         sharpness: lapN ? 255 * lap / lapN : 0,
         wb: wb, darkThreshold: darkT,
         analysisLongSide: Math.max(w, h), srcLongSide: Math.max(srcW, srcH)
       }
     };
+    if (opts.debug) res.spots = spots.spots;
+    return res;
+  };
+
+  /*
+   * Швидка перевірка якості фото ДО аналізу (екран «Нова партія»): темне, засвічене, розмите.
+   * Працює на зменшеній копії, не шукає ягід. Повертає { ok, issues: [{code, text, tip}], metrics }.
+   */
+  BS.photoQuality = function (rgba, srcW, srcH) {
+    var small = BS.resizeRGBA(rgba, srcW, srcH, 512), w = small.w, h = small.h, n = w * h, d = small.data;
+    var L = new Float32Array(n), i, x, y, sum = 0, dark = 0, bright = 0;
+    for (i = 0; i < n; i++) {
+      var l = (0.299 * d[i * 4] + 0.587 * d[i * 4 + 1] + 0.114 * d[i * 4 + 2]) / 255;
+      L[i] = l; sum += l;
+      if (l < 0.06) dark++; else if (l > 0.97) bright++;
+    }
+    var lap = 0, lapN = 0;
+    for (y = 1; y < h - 1; y++) for (x = 1; x < w - 1; x++) {
+      i = y * w + x;
+      lap += Math.abs(4 * L[i] - L[i - 1] - L[i + 1] - L[i - w] - L[i + w]); lapN++;
+    }
+    var m = { mean: sum / n, darkFraction: dark / n, brightFraction: bright / n, sharpness: lapN ? 255 * lap / lapN : 0, longSide: Math.max(srcW, srcH) };
+    var issues = [];
+    if (m.mean < 0.10 || m.darkFraction > 0.75) issues.push({ code: 'dark', text: 'Темне фото', tip: 'Додайте світла або підійдіть ближче до лампи. Спалах краще не вмикати.' });
+    if (m.brightFraction > 0.12) issues.push({ code: 'bright', text: 'Засвічене фото', tip: 'Приберіть пряме світло й спалах, не знімайте проти вікна.' });
+    if (m.sharpness < 2.2) issues.push({ code: 'blur', text: 'Розмите фото', tip: 'Тримайте пристрій нерухомо, торкніться екрана для фокусування, протріть об’єктив.' });
+    if (m.longSide < 600) issues.push({ code: 'lowres', text: 'Мале фото', tip: 'Знімайте камерою пристрою, а не надсилайте зменшену копію з месенджера.' });
+    return { ok: !issues.length, issues: issues, metrics: m };
   };
 
   // ---------- 6. Шар поверх фото ----------
@@ -392,6 +582,7 @@
     hidden = hidden || {};
     var pal = [], alpha = [];
     BS.CATEGORIES.forEach(function (c) { pal[c.id] = c.color; alpha[c.id] = hidden[c.key] ? 0 : (c.key === 'good' ? 46 : 200); });
+    pal[C.OTHER] = BS.OTHER.color; alpha[C.OTHER] = hidden.other ? 0 : 150;
 
     if (mode !== 'heat') {
       for (i = 0; i < n; i++) {
@@ -404,7 +595,7 @@
 
     // щільність дефектів на грубій сітці → розмиття → плавне збільшення
     var cell = res.cell, gw = Math.ceil(w / cell), gh = Math.ceil(h / cell), x, y, k;
-    var wt = [0, 0, 0.7, 0.7, 1, 0.5];
+    var wt = [0, 0, 0.7, 0.8, 1, 0.5, 0];
     var num = new Float32Array(gw * gh), den = new Float32Array(gw * gh);
     for (y = 0; y < h; y++) for (x = 0; x < w; x++) {
       lab = labels[y * w + x]; if (!lab) continue;

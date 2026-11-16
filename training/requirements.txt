@@ -1,0 +1,9 @@
+# PyTorch і torchvision ставить training/setup_env.ps1 (потрібен окремий індекс для CUDA).
+numpy
+pillow
+opencv-python-headless
+onnx
+onnxruntime
+onnxscript
+tqdm
+requests

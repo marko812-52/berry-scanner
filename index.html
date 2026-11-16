@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Сканер ожини</title>
-  <meta name="description" content="Орієнтовна оцінка якості партії ожини за фото лотка. Фото обробляються на пристрої.">
+  <title>Сканер ягід</title>
+  <meta name="description" content="Орієнтовна оцінка якості партії ягід за фото лотка. Фото обробляються на пристрої.">
   <meta name="theme-color" content="#4a1d5e">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" type="image/png" href="icons/icon-192.png">
@@ -14,7 +14,7 @@
 <body>
   <header class="topbar">
     <img src="icons/icon-192.png" alt="" width="32" height="32">
-    <h1>Сканер ожини</h1>
+    <h1>Сканер ягід</h1>
     <span class="chip chip-demo">демо</span>
   </header>
 
@@ -27,7 +27,24 @@
     <!-- Нова партія -->
     <section id="view-new" class="view">
       <h2>Нова партія</h2>
-      <p class="muted">Знімайте лоток зверху, щоб ягоди займали майже весь кадр. Без спалаху, при рівному світлі.</p>
+
+      <div class="card">
+        <h3>Ягода</h3>
+        <div id="profile-seg" class="seg seg-4" role="radiogroup" aria-label="Вид ягоди"></div>
+        <p id="profile-note" class="note" hidden></p>
+      </div>
+
+      <details class="card details" id="tips">
+        <summary>Як знімати, щоб оцінка була точнішою</summary>
+        <ul class="tips">
+          <li><b>Зверху й рівно.</b> Тримайте пристрій над лотком паралельно до ягід, а не під кутом.</li>
+          <li><b>Ягоди — на весь кадр.</b> Стіни, підлоги й країв лотка в кадрі має бути якнайменше.</li>
+          <li><b>Рівне світло, без спалаху.</b> Не знімайте проти вікна чи під самою лампою: бліки схожі на плісняву.</li>
+          <li><b>Різко.</b> Торкніться екрана, щоб навести фокус, і тримайте пристрій нерухомо.</li>
+          <li><b>2–5 фото на партію.</b> Різні лотки або різні місця одного лотка — результат усереднюється.</li>
+          <li><b>Те саме місце й та сама лампа</b> щоразу — тоді партії можна порівнювати між собою.</li>
+        </ul>
+      </details>
 
       <label class="btn primary big" for="in-camera">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4 7.2 6H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3.2L15 4H9Zm3 4.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9Z"/></svg>
@@ -44,6 +61,7 @@
       <button id="btn-demo" class="btn-text" type="button">Спробувати на демо-фото</button>
 
       <div id="thumbs" class="thumbs" hidden></div>
+      <div id="photo-issues" class="card warn-card" hidden></div>
 
       <details class="card details">
         <summary>Дані партії <span class="muted">(необов'язково)</span></summary>
@@ -78,7 +96,7 @@
         </div>
         <div class="viewer">
           <canvas id="res-canvas"></canvas>
-          <div id="res-roi-hint" class="roi-hint" hidden>Обведіть пальцем прямокутник, у якому лише ягоди</div>
+          <div id="res-roi-hint" class="roi-hint" hidden>Обведіть пальцем ділянку, де лише ягоди. Контур замкнеться сам.</div>
         </div>
         <div id="res-pager" class="pager" hidden>
           <button id="res-prev" type="button" aria-label="Попереднє фото">‹</button>
@@ -97,22 +115,22 @@
         <p class="muted">Орієнтовно, за видимою поверхнею. Натисніть на рядок, щоб сховати категорію на фото.</p>
         <div id="res-table" class="cats"></div>
         <p id="res-spots" class="note"></p>
-        <p class="note">Це частка площі на фото, а не маси чи кількості ягід. Пліснява — нижня оцінка: тонкий сірий наліт програма не відрізняє від відблиску.</p>
+        <p id="res-method-note" class="note"></p>
       </div>
 
       <div id="res-conf" class="card"></div>
 
       <div class="actions">
         <button id="res-pdf" class="btn primary big" type="button">PDF-звіт</button>
-        <button id="res-correct" class="btn big" type="button">Виправити результат</button>
+        <button id="res-correct" class="btn big" type="button">Оцінка сортувальника</button>
         <button id="res-new" class="btn big" type="button">Нова партія</button>
       </div>
     </section>
 
     <!-- Виправлення -->
     <section id="view-correct" class="view" hidden>
-      <h2>Виправити результат</h2>
-      <p class="muted">Вкажіть, що бачите ви. Фото і ваше виправлення збережуться на цьому пристрої — вони знадобляться, щоб навчити програму.</p>
+      <h2>Оцінка сортувальника</h2>
+      <p class="muted">Вкажіть, що бачить людина на тих самих фото. Пара «програма — людина» збережеться на цьому пристрої: за нею рахується похибка програми, а потім на таких парах її можна донавчити.</p>
       <div id="cor-fields" class="card"></div>
       <div class="card">
         <h3>Вердикт</h3>
@@ -120,8 +138,8 @@
       </div>
       <label class="field card">Коментар <textarea id="cor-comment" rows="3" maxlength="500" placeholder="Наприклад: пліснява лише в одному кутку"></textarea></label>
       <div class="actions">
-        <button id="cor-save" class="btn primary big" type="button">Зберегти виправлення</button>
-        <button id="cor-remove" class="btn big" type="button" hidden>Прибрати виправлення</button>
+        <button id="cor-save" class="btn primary big" type="button">Зберегти оцінку</button>
+        <button id="cor-remove" class="btn big" type="button" hidden>Прибрати оцінку</button>
         <button id="cor-cancel" class="btn big" type="button">Скасувати</button>
       </div>
     </section>
@@ -183,6 +201,7 @@
   <script src="js/core/defaults.js"></script>
   <script src="js/core/segment.js"></script>
   <script src="js/core/verdict.js"></script>
+  <script src="js/core/analyzer.js"></script>
   <script src="js/io/image.js"></script>
   <script src="js/io/db.js"></script>
   <script src="js/io/pdf.js"></script>

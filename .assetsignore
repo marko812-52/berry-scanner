@@ -1,0 +1,20 @@
+# Cloudflare (Workers зі статичними файлами): що НЕ розгортати на сайт.
+# Сайту потрібні лише index.html, css/, js/, vendor/, icons/, models/, data/samples/, sw.js, manifest, _headers.
+.git
+.gitignore
+.assetsignore
+.claude
+.venv
+.cache
+node_modules
+training
+tests
+tools
+docs
+datasets
+runs
+data/custom
+*.md
+*.log
+*.py
+*.ps1

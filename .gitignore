@@ -3,3 +3,36 @@ node_modules/
 *.log
 Thumbs.db
 .DS_Store
+
+# --- навчання: у git і в деплой не потрапляє нічого важкого ---
+# Python-середовище, кеші, тимчасові файли
+.venv/
+.cache/
+__pycache__/
+*.pyc
+
+# датасети, сирі фото, чекпойнти, проміжні файли
+datasets/
+runs/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.npy
+*.npz
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar
+
+# власні фото користувача для донавчання (у git лише опис папки)
+data/custom/*
+!data/custom/README.md
+
+# у деплой іде лише фінальна легка модель models/*.onnx; усе інше поруч ігнорується
+models/*
+!models/*.onnx
+!models/*.json
+!models/README.md

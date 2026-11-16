@@ -22,8 +22,9 @@
         var doc = {
           app: 'berry-scanner', appVersion: BS.APP_VERSION, algoVersion: BS.ALGO_VERSION,
           exportedAt: new Date().toISOString(),
-          note: 'percents — частка площі видимої поверхні, %. correction — виправлення оператора (якщо є). Фото: photos/<photo.id>.jpg',
-          categories: BS.CATEGORIES.map(function (c) { return { key: c.key, label: c.label }; }),
+          note: 'percents — частка площі ягід на фото, %. correction — оцінка сортувальника для тих самих фото (якщо є): пара «програма — людина». ' +
+            'Старі записи можуть мати red і green замість unripe (unripe = red + green). Фото: photos/<photo.id>.jpg',
+          taxonomy: BS.CATEGORIES.map(function (c) { return { key: c.key, id: c.id, label: c.label }; }).concat([{ key: 'other', id: BS.OTHER.id, label: BS.OTHER.label + ' (у 100 % не входить)' }]),
           settings: currentSettings,
           batches: batches.map(function (b) { var c = Object.assign({}, b); delete c.thumb; return c; })
         };

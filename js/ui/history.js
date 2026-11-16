@@ -20,16 +20,18 @@
     $('hist-export').disabled = !list.length;
     if (!list.length) { box.append(el('div', { class: 'card empty', text: 'Тут з’являться оцінені партії.' })); return; }
     list.forEach((rec) => {
-      const ev = rec.evaluation, open = () => openRecord(rec);
+      const ev = BS.normalizeEvaluation(rec.evaluation), open = () => openRecord(rec);
+      const prof = BS.PROFILES[(rec.settings && rec.settings.profile) || 'blackberry'] || BS.PROFILES.blackberry;
       box.append(el('div', { class: 'hist-item' },
         el('button', { type: 'button', class: 'hist-thumb', onclick: open, 'aria-label': 'Відкрити партію' }, el('img', { src: rec.thumb, alt: '' })),
         el('button', { type: 'button', class: 'hist-main', onclick: open },
-          el('div', { class: 't', text: BS.fmtDate(rec.createdAt) + (rec.meta && rec.meta.batchNo ? ' · № ' + rec.meta.batchNo : '') }),
+          el('div', { class: 't', text: BS.fmtDate(rec.createdAt) + ' · ' + prof.label + (rec.meta && rec.meta.batchNo ? ' · № ' + rec.meta.batchNo : '') }),
+          rec.meta && rec.meta.supplier ? el('div', { class: 'muted', text: rec.meta.supplier }) : null,
           el('div', { class: 'chips' },
             el('span', { class: 'chip chip-' + ev.verdict.code, text: BS.VERDICTS[ev.verdict.code].short }),
             el('span', { class: 'chip chip-unknown', text: 'пліснява ' + BS.fmtPct(ev.percents.mold) + ' %' }),
             ev.needsReview ? el('span', { class: 'chip chip-warn', text: 'перевірити' }) : null,
-            rec.correction ? el('span', { class: 'chip chip-demo', style: 'background:#f4ecf8;color:#4a1d5e', text: 'виправлено' }) : null)),
+            rec.correction ? el('span', { class: 'chip chip-demo', style: 'background:#f4ecf8;color:#4a1d5e', text: 'є оцінка людини' }) : null)),
         el('button', {
           type: 'button', class: 'del', 'aria-label': 'Видалити партію',
           onclick: async () => {
@@ -53,8 +55,8 @@
       for (const ph of rec.photos) {
         if (!byId[ph.id]) continue;
         const canvas = await BS.decodeToCanvas(byId[ph.id].blob, BS.STORE_SIDE);
-        const p = { id: ph.id, canvas, blob: byId[ph.id].blob, w: ph.w, h: ph.h, thumb: photos.length ? '' : rec.thumb, roiRect: ph.roiRect || null };
-        ui.runPhoto(p, settings);
+        const p = { id: ph.id, canvas, blob: byId[ph.id].blob, w: ph.w, h: ph.h, thumb: photos.length ? '' : rec.thumb, roiRect: ph.roiRect || null, roiPoly: ph.roiPoly || null };
+        await ui.runPhoto(p, settings);
         photos.push(p);
         await ui.tick();
       }
@@ -63,7 +65,7 @@
       ui.openBatch({
         id: rec.id, createdAt: rec.createdAt, meta: rec.meta || {}, photos, settings,
         algo: rec.algo, appVersion: rec.appVersion, correction: rec.correction || null, evaluation: rec.evaluation,
-        overlayNote: rec.algo !== BS.ALGO_VERSION ? 'Позначки на фото перераховано новішою версією алгоритму; цифри показано такими, як їх збережено.' : ''
+        overlayNote: rec.algo !== ui.algoOf(photos) ? 'Позначки на фото перераховано поточною версією алгоритму; цифри показано такими, як їх збережено.' : ''
       }, 'history');
     } catch (e) {
       console.error(e); ui.busy(false); ui.toast('Не вдалося відкрити партію');
@@ -74,8 +76,7 @@
     ui.busy('Готую файл експорту…'); await ui.tick();
     try {
       const out = await BS.exportAll(ui.settings);
-      const d = new Date(), p = (n) => (n < 10 ? '0' : '') + n;
-      ui.download(out.blob, 'berry-scanner-export-' + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + '.zip');
+      ui.download(out.blob, 'berry-scanner-export-' + ui.stamp() + '.zip');
       ui.toast('Експортовано партій: ' + out.batches + ', фото: ' + out.photos);
     } catch (e) { console.error(e); ui.toast('Не вдалося створити файл експорту'); }
     ui.busy(false);

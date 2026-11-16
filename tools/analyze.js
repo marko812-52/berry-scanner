@@ -5,6 +5,9 @@
  *   node tools/analyze.js фото.jpg --out шар.png         — фото з накладеними категоріями
  *   ... --mode heat                                      — теплова карта
  *   ... --crop x,y,w,h --zoom 3 --pair                   — фрагмент (координати аналізу), поруч оригінал
+ *   ... --profile blueberry|raspberry|strawberry         — профіль ягоди (типово ожина)
+ *   ... --full                                           — зона = весь кадр (перевірити, що фон не стає пліснявою)
+ *   ... --spots                                          — ознаки кожної білої плями (для налагодження порогів)
  */
 'use strict';
 const { BS, loadJpeg, writePng, composite } = require('./lib.js');
@@ -16,14 +19,16 @@ if (!file) { console.error('Вкажи шлях до фото (JPEG).'); process
 
 const img = loadJpeg(file);
 const t0 = Date.now();
-const res = BS.analyze(img.data, img.w, img.h, BS.DEFAULT_SETTINGS);
+const settings = Object.assign(BS.cloneSettings(BS.DEFAULT_SETTINGS), { profile: opt('profile', 'blackberry') });
+if (!BS.PROFILES[settings.profile]) { console.error('Невідомий профіль: ' + settings.profile); process.exit(1); }
+const res = BS.analyze(img.data, img.w, img.h, settings, { debug: !!opt('spots', false), roiRect: opt('full', false) ? { x0: 0, y0: 0, x1: 1, y1: 1 } : null });
 const ms = Date.now() - t0;
-const batch = BS.evaluateBatch([res], BS.DEFAULT_SETTINGS);
+const batch = BS.evaluateBatch([res], settings);
 const r1 = (v) => Math.round(v * 10) / 10;
 
 console.log(JSON.stringify({
   source: img.w + 'x' + img.h, analysis: res.w + 'x' + res.h, ms,
-  roiPercent: r1(res.roiFraction * 100),
+  profile: res.profile, roiPercent: r1(res.roiFraction * 100), otherPercent: r1(res.otherFraction * 100),
   percents: Object.fromEntries(Object.entries(res.percents).map(([k, v]) => [k, r1(v)])),
   moldSpots: res.moldSpots, moldMaxSpotPercent: r1(res.moldMaxSpotFraction * 100),
   glarePercent: r1(res.glareFraction * 100), uncertainPercent: r1(res.uncertainFraction * 100),
@@ -31,10 +36,15 @@ console.log(JSON.stringify({
   verdict: batch.verdict.code, confidence: batch.confidence.score, needsReview: batch.needsReview,
   issues: batch.issues.map((i) => i.text), reasons: batch.verdict.reasons
 }, null, 1));
+if (res.spots) {
+  const f = (v) => v.toFixed(3);
+  res.spots.filter((s) => s.kind !== 'glare' || s.area >= 20).sort((a, b) => b.area - a.area).slice(0, 60)
+    .forEach((s) => console.log(s.kind.padEnd(6), 'x', s.x, 'y', s.y, 'площа', s.area, 'V', f(s.meanV), 'край', f(s.edge), 'гладкість', f(s.flat), 'оточення', f(s.surround)));
+}
 
 const out = opt('out');
 if (out) {
-  const small = BS.resizeRGBA(img.data, img.w, img.h, BS.DEFAULT_SETTINGS.analysisSize);
+  const small = BS.resizeRGBA(img.data, img.w, img.h, settings.analysisSize);
   const n = res.w * res.h;
   let pic = composite(small.data, BS.renderOverlay(res, opt('mode', 'classes')), n), base = small.data;
   let w = res.w, h = res.h;

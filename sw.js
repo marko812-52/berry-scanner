@@ -3,7 +3,7 @@
  * УВАГА: при кожному оновленні програми змінюй VERSION (має збігатися з BS.APP_VERSION у js/core/defaults.js),
  * інакше пристрої й далі показуватимуть стару версію з кешу. Нові файли додавай в ASSETS.
  */
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const CACHE = 'berry-scanner-' + VERSION;
 const ASSETS = [
   './',
@@ -18,6 +18,7 @@ const ASSETS = [
   'js/core/defaults.js',
   'js/core/segment.js',
   'js/core/verdict.js',
+  'js/core/analyzer.js',
   'js/io/image.js',
   'js/io/db.js',
   'js/io/pdf.js',

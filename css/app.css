@@ -73,6 +73,8 @@ label.btn:focus-within, .btn:focus-visible, .btn-text:focus-visible, .tabs butto
 .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; }
 .thumb { position: relative; aspect-ratio: 1; border-radius: 12px; overflow: hidden; background: #ddd; }
 .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb.bad { outline: 3px solid #e0a100; }
+.thumb .flag { position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 4px; background: rgba(154,91,0,.92); color: #fff; font-size: 12px; font-weight: 650; line-height: 1.2; text-align: center; }
 .thumb button { position: absolute; top: 4px; right: 4px; width: 40px; height: 40px; border-radius: 50%; border: 0; background: rgba(0,0,0,.62); color: #fff; font-size: 22px; line-height: 1; cursor: pointer; }
 
 .details summary { min-height: 32px; font-weight: 650; cursor: pointer; }
@@ -104,6 +106,12 @@ label.btn:focus-within, .btn:focus-visible, .btn-text:focus-visible, .tabs butto
 .seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border-radius: 14px; background: var(--bg); margin-bottom: 12px; }
 .seg button { min-height: 46px; border: 0; border-radius: 10px; background: none; color: var(--muted); font: inherit; font-size: 15px; font-weight: 650; cursor: pointer; padding: 4px; }
 .seg button.on { background: #fff; color: var(--berry); box-shadow: 0 1px 3px rgba(0,0,0,.14); }
+.seg.seg-4 { grid-template-columns: repeat(4, 1fr); margin: 8px 0 0; }
+.seg.seg-2 { grid-template-columns: repeat(2, 1fr); }
+@media (max-width: 420px) { .seg.seg-4 { grid-template-columns: repeat(2, 1fr); } }
+.tips { margin: 0; padding-left: 20px; font-size: 15px; display: flex; flex-direction: column; gap: 8px; }
+.warn-card { border-color: #e9c46a; background: var(--warn-bg); color: #5c3b00; }
+.warn-card .issues { color: inherit; } .warn-card .note { color: #7a5200; }
 .viewer { position: relative; border-radius: 12px; overflow: hidden; background: #111; line-height: 0; }
 .viewer canvas { display: block; margin: 0 auto; width: auto; height: auto; max-width: 100%; max-height: 74vh; }
 .viewer.selecting canvas { touch-action: none; cursor: crosshair; }
@@ -121,6 +129,7 @@ label.btn:focus-within, .btn:focus-visible, .btn-text:focus-visible, .tabs butto
 .cat .pct { font-size: 20px; font-weight: 750; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .cat .bar { grid-column: 1 / -1; height: 8px; border-radius: 4px; background: var(--bg); overflow: hidden; }
 .cat .bar i { display: block; height: 100%; border-radius: 4px; min-width: 3px; }
+.cat.other .name, .cat.other .pct { font-weight: 500; color: var(--muted); font-size: 15px; }
 .cat.off { opacity: .45; }
 .cat.off .name { text-decoration: line-through; }
 
@@ -132,7 +141,17 @@ label.btn:focus-within, .btn:focus-visible, .btn-text:focus-visible, .tabs butto
 .meter.high i { background: var(--ok); } .meter.medium i { background: #e0a100; } .meter.low i { background: var(--bad); }
 .issues { margin: 6px 0 0; padding-left: 20px; font-size: 15px; color: #40384a; }
 
-/* Виправлення */
+/* Порівняння «програма — людина» */
+.cmp { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px 14px; margin-top: 10px; font-size: 15px; font-variant-numeric: tabular-nums; align-items: baseline; }
+.cmp span { text-align: right; white-space: nowrap; }
+.cmp .n { text-align: left; white-space: normal; font-weight: 600; }
+.cmp .h { font-size: 13px; color: var(--muted); font-weight: 600; }
+.cmp .d { font-weight: 700; color: var(--muted); }
+.cmp .d.diff { color: var(--warn); } .cmp .d.miss { color: var(--bad); }
+.miss-note { margin-top: 8px; padding: 8px 12px; border-radius: 10px; background: var(--bad-bg); color: #8c1512; font-weight: 650; font-size: 15px; }
+.stepper .prog { margin-left: auto; font-weight: 500; font-size: 14px; color: var(--muted); white-space: nowrap; }
+
+/* Оцінка сортувальника */
 .stepper { display: grid; grid-template-columns: 64px 1fr 64px; align-items: center; gap: 8px; padding: 12px 0; border-top: 1px solid var(--line); }
 .stepper:first-child { border-top: 0; }
 .stepper .name { grid-column: 1 / -1; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; }

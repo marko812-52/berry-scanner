@@ -17,7 +17,7 @@
   BS.pdfFileName = function (batch) {
     var d = new Date(batch.createdAt), p = function (n) { return (n < 10 ? '0' : '') + n; };
     var tag = (batch.meta && batch.meta.batchNo || '').replace(/[^0-9A-Za-zА-Яа-яІіЇїЄєҐґ_-]+/g, '_').slice(0, 30);
-    return 'ozhyna-' + (tag ? tag + '-' : '') + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + '.pdf';
+    return 'yahody-' + (tag ? tag + '-' : '') + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes()) + '.pdf';
   };
 
   // images: [{ dataUrl, w, h }] — анотовані фото в тому ж порядку, що й batch.photos
@@ -26,7 +26,9 @@
     doc.addFileToVFS('NotoSans-Regular.ttf', BS_FONTS.regular); doc.addFont('NotoSans-Regular.ttf', 'NotoSans', 'normal');
     doc.addFileToVFS('NotoSans-Bold.ttf', BS_FONTS.bold); doc.addFont('NotoSans-Bold.ttf', 'NotoSans', 'bold');
 
-    var ev = batch.evaluation, y = 0;
+    var ev = BS.normalizeEvaluation(batch.evaluation), y = 0;
+    var pk = (batch.settings && batch.settings.profile) || 'blackberry', prof = BS.PROFILES[pk] || BS.PROFILES.blackberry;
+    var first = batch.photos[0] && (batch.photos[0].result || batch.photos[0].summary) || {}, method = first.method || 'color';
     function font(size, bold, color) {
       doc.setFont('NotoSans', bold ? 'bold' : 'normal'); doc.setFontSize(size);
       var c = color || [29, 23, 34]; doc.setTextColor(c[0], c[1], c[2]);
@@ -50,7 +52,7 @@
 
     // --- шапка ---
     doc.setFillColor(74, 29, 94); doc.rect(0, 0, W, 27, 'F');
-    font(17, true, [255, 255, 255]); doc.text('Візуальна оцінка партії ожини', M, 12.5);
+    font(17, true, [255, 255, 255]); doc.text('Візуальна оцінка партії: ' + prof.label.toLowerCase(), M, 12.5);
     font(9.5, false, [232, 220, 240]); doc.text('Орієнтовно, за видимою поверхнею на фото. Не є лабораторним висновком.', M, 20);
     font(10, true, [255, 255, 255]); doc.text(BS.fmtDate(batch.createdAt), W - M, 12.5, { align: 'right' });
     y = 33;
@@ -61,6 +63,7 @@
     if (meta.supplier) pairs.push(['Постачальник', meta.supplier]);
     if (meta.operator) pairs.push(['Оператор', meta.operator]);
     pairs.push(['Фото в партії', String(batch.photos.length)]);
+    pairs.push(['Спосіб', BS.modeLabel(method).toLowerCase() + (first.modelVersion ? ' (' + first.modelVersion + ')' : '')]);
     var colW = (W - 2 * M) / 2;
     pairs.forEach(function (p, i) {
       var x = M + (i % 2) * colW, yy = y + Math.floor(i / 2) * 6;
@@ -74,29 +77,29 @@
     // --- фото + таблиця ---
     var im = images[0], top = y;
     var pw = 88, ph = pw * im.h / im.w;
-    if (ph > 116) { ph = 116; pw = ph * im.w / im.h; }
+    if (ph > 112) { ph = 112; pw = ph * im.w / im.h; }
     doc.addImage(im.dataUrl, 'JPEG', M, top, pw, ph, undefined, 'FAST');
     font(8, false, [106, 98, 114]);
     doc.text(batch.photos.length > 1 ? 'Фото 1 з ' + batch.photos.length + ' з позначеними категоріями' : 'Фото з позначеними категоріями', M, top + ph + 4);
 
     var tx = M + 88 + 8, tw = W - M - tx, ty = top;
     font(12, true); doc.text('Склад партії', tx, ty + 4.5); ty += 7;
-    font(8.5, false, [106, 98, 114]); doc.text('частка площі на фото, орієнтовно', tx, ty + 3); ty += 7;
+    font(8.5, false, [106, 98, 114]); doc.text('частка площі ягід на фото, орієнтовно', tx, ty + 3); ty += 7;
     BS.CATEGORIES.forEach(function (c) {
       var v = ev.percents[c.key];
       doc.setFillColor(c.color[0], c.color[1], c.color[2]); doc.setDrawColor(150, 150, 150); doc.setLineWidth(0.15);
       doc.roundedRect(tx, ty, 4.2, 4.2, 0.8, 0.8, 'FD');
-      font(10.5, false); doc.text(c.label, tx + 7, ty + 3.6);
+      font(10.5, false); doc.text(BS.categoryLabel(c.key, pk), tx + 7, ty + 3.6);
       font(11, true); doc.text(BS.fmtPct(v) + ' %', tx + tw, ty + 3.6, { align: 'right' });
       doc.setFillColor(236, 232, 240); doc.roundedRect(tx, ty + 6, tw, 1.6, 0.8, 0.8, 'F');
       doc.setFillColor(c.color[0], c.color[1], c.color[2]);
       doc.roundedRect(tx, ty + 6, Math.max(0.8, tw * Math.min(100, v) / 100), 1.6, 0.8, 0.8, 'F');
-      ty += 12;
+      ty += 11;
     });
     ty += 1;
-    ty = para('Недостиглі разом (червоні + зелені): ' + BS.fmtPct(ev.unripe) + ' %', tx, ty, tw, 9.5, false);
     ty = para('Знайдено плям плісняви: ' + ev.moldSpots, tx, ty, tw, 9.5, false);
-    ty = para('Пліснява — нижня оцінка: тонкий сірий наліт програма не відрізняє від відблиску.', tx, ty + 1.5, tw, 8.5, false, [106, 98, 114]);
+    if (ev.otherFraction >= 0.0005) ty = para('Фон / інше в зоні: ' + BS.fmtPct(100 * ev.otherFraction) + ' % (у склад не входить)', tx, ty, tw, 9.5, false);
+    if (method === 'color') ty = para('«Пошкоджені» кольоровий метод не визначає.', tx, ty, tw, 8.5, false, [106, 98, 114]);
     y = Math.max(top + ph + 6, ty) + 5;
 
     // --- вердикт ---
@@ -130,14 +133,14 @@
 
     // --- виправлення оператора ---
     if (batch.correction) {
-      var c = batch.correction;
-      var txt = 'Вердикт оператора: ' + BS.VERDICTS[c.verdict].label + '\n' +
-        'Частки: ' + BS.CATEGORIES.map(function (k) { return k.label.toLowerCase() + ' ' + BS.fmtPct(c.percents[k.key]) + ' %'; }).join('; ') +
+      var c = batch.correction, hp = BS.normalizePercents(c.percents);
+      var txt = 'Вердикт сортувальника: ' + BS.VERDICTS[c.verdict].label + '\n' +
+        'Частки (людина / програма): ' + BS.CATEGORIES.map(function (k) { return k.label.toLowerCase() + ' ' + BS.fmtPct(hp[k.key]) + ' / ' + BS.fmtPct(ev.percents[k.key]) + ' %'; }).join('; ') +
         (c.comment ? '\nКоментар: ' + c.comment : '');
       var ch = 5 + 5.5 + measure(txt, inner, 9.5, false) + 3.5;
       ensure(ch + 4);
       box(ch, [244, 236, 248], [107, 45, 134]);
-      font(10.5, true, [74, 29, 94]); doc.text('Виправлено оператором, ' + BS.fmtDate(c.at), M + 5, y + 7);
+      font(10.5, true, [74, 29, 94]); doc.text('Оцінка сортувальника, ' + BS.fmtDate(c.at), M + 5, y + 7);
       para(txt, M + 5, y + 10.5, inner, 9.5, false);
       y += ch + 4;
     }
@@ -145,11 +148,13 @@
     // --- пороги ---
     var v = batch.settings.verdict;
     var thr = 'Пороги (демо-значення, уточнити з технологом). Заморожування після сортування: пліснява до ' + num(v.freezeMold) +
-      ' %, недостиглі до ' + num(v.freezeUnripe) + ' %, домішки до ' + num(v.freezeDebris) + ' %. Переробка: пліснява до ' + num(v.processMold) +
-      ' %, недостиглі до ' + num(v.processUnripe) + ' %, домішки до ' + num(v.processDebris) + ' %. Вище — відхилити.';
+      ' %, недостиглі до ' + num(v.freezeUnripe) + ' %' + (v.freezeDamaged != null ? ', пошкоджені до ' + num(v.freezeDamaged) + ' %' : '') + ', домішки до ' + num(v.freezeDebris) + ' %. Переробка: пліснява до ' + num(v.processMold) +
+      ' %, недостиглі до ' + num(v.processUnripe) + ' %' + (v.processDamaged != null ? ', пошкоджені до ' + num(v.processDamaged) + ' %' : '') + ', домішки до ' + num(v.processDebris) + ' %. Вище — відхилити.';
     ensure(measure(thr, W - 2 * M, 8.5, false) + 2);
     y = para(thr, M, y, W - 2 * M, 8.5, false, [106, 98, 114]) + 2;
-    var how = 'Як рахується: програма виділяє на фото зону ягід і за кольором відносить кожну ділянку до категорії. Відсоток — це частка площі видимого верхнього шару, а не маси чи кількості ягід.';
+    var how = 'Як рахується: програма виділяє на фото зону ягід і відносить кожну ділянку до категорії (' + (method === 'color' ? 'за кольором' : method === 'model' ? 'навченою моделлю' : 'за кольором, з перевіркою навченою моделлю') +
+      '). Відсоток — це частка площі видимого верхнього шару ягід, а не маси чи кількості. Пліснява — нижня оцінка: тонкий сірий наліт програма не відрізняє від відблиску.' +
+      (prof.experimental ? ' Профіль «' + prof.label + '» експериментальний.' : '');
     ensure(measure(how, W - 2 * M, 8.5, false));
     y = para(how, M, y, W - 2 * M, 8.5, false, [106, 98, 114]);
 
@@ -164,8 +169,8 @@
         if (col === 0 && y + h + 14 > H - 18) { doc.addPage(); y = 16; }
         var x = M + col * (cw + 8);
         doc.addImage(g.dataUrl, 'JPEG', x, y, w, h, undefined, 'FAST');
-        var s = batch.photos[i].result || batch.photos[i].summary, p = s.percents;
-        para('Фото ' + (i + 1) + ': пліснява ' + BS.fmtPct(p.mold) + ' %, недостиглі ' + BS.fmtPct(p.red + p.green) + ' %, домішки ' + BS.fmtPct(p.debris) + ' %',
+        var s = batch.photos[i].result || batch.photos[i].summary, p = BS.normalizePercents(s.percents);
+        para('Фото ' + (i + 1) + ': пліснява ' + BS.fmtPct(p.mold) + ' %, недостиглі ' + BS.fmtPct(p.unripe) + ' %, домішки ' + BS.fmtPct(p.debris) + ' %',
           x, y + h + 1.5, cw, 8.5, false, [64, 56, 74]);
         rowH = Math.max(rowH, h + 12);
         if (++col === 2 || i === images.length - 1) { col = 0; y += rowH + 4; rowH = 0; }
@@ -177,7 +182,7 @@
     for (var n = 1; n <= pages; n++) {
       doc.setPage(n);
       font(8, false, [140, 132, 148]);
-      doc.text('Сканер ожини ' + BS.APP_VERSION + ' · алгоритм ' + (batch.algo || BS.ALGO_VERSION) + ' · фото оброблено на пристрої', M, H - 8);
+      doc.text('Сканер ягід ' + BS.APP_VERSION + ' · алгоритм ' + (batch.algo || BS.ALGO_VERSION) + ' · фото оброблено на пристрої', M, H - 8);
       doc.text('Сторінка ' + n + ' з ' + pages, W - M, H - 8, { align: 'right' });
     }
     return doc;
