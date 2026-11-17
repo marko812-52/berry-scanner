@@ -423,6 +423,8 @@
   // rgba: Uint8ClampedArray (RGBA).
   // opts.roiPoly: [{x,y},…] у частках кадру — зона, обведена вручну; opts.roiRect: {x0,y0,x1,y1} — прямокутна (старі записи).
   // opts.debug: додати до результату список білих плям з ознаками (для налагодження порогів).
+  // opts.pxScale: масштаб пікселя відносно фото, зменшеного до 1024 px (для плиток, вирізаних з такого фото, — 1).
+  //   Типово — довша сторона / 1024: пороги площі плям і розмір сітки зони рахуються від нього.
   BS.analyze = function (rgba, srcW, srcH, settings, opts) {
     settings = settings || BS.DEFAULT_SETTINGS;
     opts = opts || {};
@@ -444,7 +446,8 @@
     var darkT = clamp(otsu(hist, histN), 0.30, 0.50);
 
     // --- зона ягід ---
-    var cell = Math.max(4, Math.round(Math.max(w, h) / 128));
+    var scale = opts.pxScale || Math.max(w, h) / 1024, scale2 = scale * scale;
+    var cell = Math.max(4, Math.round(8 * scale));
     var zone, manual = false;
     if (opts.roiPoly && opts.roiPoly.length >= 3) {
       manual = true; zone = BS.rasterPolygon(opts.roiPoly, w, h);
@@ -492,7 +495,6 @@
     }
 
     // --- білі плями: пліснява, блик чи фон ---
-    var scale = Math.max(w, h) / 1024, scale2 = scale * scale;
     var queue = new Int32Array(n);
     var spots = classifyWhiteSpots(labels, w, h, V, inside, zoneN, Math.max(4, prof.moldMinSpot * scale2), sp, scale, queue, opts.debug);
 

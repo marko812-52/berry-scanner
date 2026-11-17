@@ -1,8 +1,10 @@
 """Легка сегментаційна мережа для браузера: MobileNetV3-small (torchvision, BSD-3) + мала «голова» FPN.
 
-Вихід — логіти класів на сітці з кроком 4 px. Мережа повністю згорткова: розмір входу довільний (кратний 32).
-Близько 1,1 млн параметрів: ~4,5 МБ у float32, ~1,3 МБ після квантизації до int8.
-Навчальний код не прив'язаний до архітектури: достатньо замінити build_model().
+Виходи:
+  logits  — логіти класів єдиної таксономії на сітці з кроком 4 px (N × 6 × H/4 × W/4);
+  species — логіти виду ягоди (N × 4: ожина, лохина, малина, полуниця) — лише підказка в інтерфейсі.
+Мережа повністю згорткова: розмір входу довільний (кратний 32). Вхід — RGB 0..1, нормалізація всередині.
+Близько 1,1 млн параметрів. Навчальний код не прив'язаний до архітектури: достатньо замінити build_model().
 """
 from __future__ import annotations
 
@@ -11,7 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models import MobileNet_V3_Small_Weights, mobilenet_v3_small
 
-from taxonomy import NUM_CLASSES
+from taxonomy import NUM_CLASSES, SPECIES
 
 MEAN = (0.485, 0.456, 0.406)
 STD = (0.229, 0.224, 0.225)
@@ -37,11 +39,12 @@ class BerrySeg(nn.Module):
         self.lat = nn.ModuleList([nn.Conv2d(c, width, 1) for c in (16, 24, 48, 96)])
         self.smooth = nn.ModuleList([dsconv(width, width) for _ in range(3)])
         self.head = nn.Sequential(dsconv(width, width), nn.Conv2d(width, num_classes, 1))
+        self.species = nn.Linear(96, len(SPECIES))
         # нормалізація всередині мережі: у браузер подаються просто пікселі 0..1
         self.register_buffer("mean", torch.tensor(MEAN).view(1, 3, 1, 1))
         self.register_buffer("std", torch.tensor(STD).view(1, 3, 1, 1))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor):
         x = (x - self.mean) / self.std
         c2 = self.s4(x)
         c3 = self.s8(c2)
@@ -50,7 +53,7 @@ class BerrySeg(nn.Module):
         p = self.lat[3](c5)
         for i, c in zip((2, 1, 0), (c4, c3, c2)):
             p = self.smooth[i](self.lat[i](c) + F.interpolate(p, size=c.shape[-2:], mode="nearest"))
-        return self.head(p)
+        return self.head(p), self.species(c5.mean(dim=(2, 3)))
 
 
 def build_model(pretrained: bool = True) -> nn.Module:
@@ -60,5 +63,5 @@ def build_model(pretrained: bool = True) -> nn.Module:
 if __name__ == "__main__":
     m = build_model(pretrained=False).eval()
     n = sum(p.numel() for p in m.parameters())
-    y = m(torch.zeros(1, 3, 384, 512))
-    print(f"параметрів: {n / 1e6:.2f} млн · вихід: {tuple(y.shape)}")
+    y, s = m(torch.zeros(1, 3, 384, 512))
+    print(f"параметрів: {n / 1e6:.2f} млн · вихід: {tuple(y.shape)} · вид: {tuple(s.shape)}")

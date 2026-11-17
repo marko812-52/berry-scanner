@@ -27,7 +27,7 @@ IMAGE_EXT = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 
 # Класи Fruits-360, які нам потрібні (ягоди чотирьох профілів).
 FRUITS360_CLASSES = (
-    "Blackberrie 1", "Blackberrie 2", "Blackberrie half rippen 1", "Blackberrie not rippen 1",
+    "Blackberrie 1", "Blackberrie half rippen 1", "Blackberrie not rippen 1",
     "Blueberry 1", "Raspberry 1", "Strawberry 1",
 )
 SMARTBERRY_CLASSES = ("ripe fruits", "unripe fruits", "fruit rot", "fruit powdery mildew", "drought fruits", "healthy leaves")

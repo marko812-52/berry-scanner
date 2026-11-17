@@ -23,11 +23,10 @@ MAPPING = {
         "kind": "sprite",
         "classes": {
             "Blackberrie 1": ("blackberry", GOOD),
-            "Blackberrie 2": ("blackberry", GOOD),
             "Blackberrie half rippen 1": ("blackberry", UNRIPE),
             "Blackberrie not rippen 1": ("blackberry", UNRIPE),
             "Blueberry 1": ("blueberry", GOOD),
-            "Raspberry 1": ("raspberry", GOOD),
+            "Raspberry 1": ("raspberry", GOOD),      # у наборі ці фото фіолетові: відтінок виправляється в synth.py
             "Strawberry 1": ("strawberry", GOOD),
         },
     },

@@ -6,7 +6,7 @@
   'use strict';
   var BS = (root.BS = root.BS || {});
 
-  BS.APP_VERSION = '0.2.0';
+  BS.APP_VERSION = '0.3.0';
   // Змінюй при будь-якій зміні логіки сегментації: версія зберігається з кожною партією.
   BS.ALGO_VERSION = 'hsv-v1.0';
 

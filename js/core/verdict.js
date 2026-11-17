@@ -51,6 +51,15 @@
     else if (expo > 2.6) add('bright', 20, 'Фото пересвічене або ягоди світлі');
     else if (q.gainClamped) add('exposure', 8, 'Незвична яскравість фото');
     if (res.otherFraction > 0.25) add('other', Math.min(15, 4 + (res.otherFraction - 0.25) * 40), 'У зоні багато фону (' + Math.round(res.otherFraction * 100) + ' %) — уточніть зону обведенням');
+    if (res.fallback) add('fallback', 5, res.fallback);
+    if (res.method === 'model' || res.method === 'hybrid') {
+      if (res.modelConfidence < 0.6) add('model-unsure', Math.min(20, 6 + (0.6 - res.modelConfidence) * 60), 'Модель не впевнена в класах (середня ймовірність ' + Math.round(res.modelConfidence * 100) + ' %)');
+      var dm = Math.abs((res.colorMold || 0) - (res.modelMold || 0));
+      if (dm > Math.max(1.5, 0.5 * Math.max(res.colorMold || 0, res.modelMold || 0))) {
+        add('disagree', 15, 'Кольоровий метод і модель розходяться щодо плісняви: ' + f(res.colorMold) + ' проти ' + f(res.modelMold));
+      }
+      if (res.speciesHint && BS.PROFILES[res.speciesHint]) add('species', 10, 'Схоже, на фото ' + BS.PROFILES[res.speciesHint].label.toLowerCase() + ', а вибрано профіль «' + prof.label + '» — перевірте вибір ягоди');
+    }
     if (prof.experimental && res.method !== 'model') add('profile', 12, 'Профіль «' + prof.label + '» експериментальний: кольори підібрано без перевірки на реальних лотках');
     if (q.clipped > 0.03) add('clipped', 10, 'Багато пересвічених ділянок');
     if (q.sharpness < SHARP_MIN) add('blur', Math.min(25, 8 + (SHARP_MIN - q.sharpness) * 5), 'Фото нечітке');

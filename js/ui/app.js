@@ -116,6 +116,32 @@
   }
   ui.renderProfiles = renderProfiles;
 
+  // перемикач способу аналізу і стан моделі
+  ui.modelStatusText = () => {
+    const st = BS.model && BS.model.state;
+    if (!BS.analyzer.modelSupported()) return 'Модель недоступна: сторінку відкрито як файл або браузер застарий. Працює кольоровий метод.';
+    if (!st || st.status === 'idle') return 'Модель завантажиться при першому аналізі (близько 16 МБ, один раз), далі працює офлайн.';
+    if (st.status === 'loading') return 'Модель завантажується…';
+    if (st.status === 'ready') return 'Модель готова (' + st.info.version + ', ' + (st.info.bytes / 1048576).toFixed(1).replace('.', ',') + ' МБ). Працює без інтернету.';
+    return 'Модель не завантажилась (' + st.error + '). Буде застосовано кольоровий метод.';
+  };
+  function renderModes() {
+    const box = $('mode-seg'); box.textContent = '';
+    BS.MODES.forEach((m) => {
+      const on = ui.settings.mode === m.key;
+      box.append(el('button', {
+        type: 'button', role: 'radio', 'aria-checked': on ? 'true' : 'false', class: on ? 'on' : '', text: m.label,
+        onclick: () => {
+          ui.settings.mode = m.key; ui.saveSettings(); renderModes();
+          if (m.key !== 'color' && BS.analyzer.modelSupported()) BS.model.load().then(renderModes, renderModes);   // підвантажити заздалегідь
+        }
+      }));
+    });
+    const cur = BS.MODES.find((m) => m.key === ui.settings.mode) || BS.MODES[0];
+    $('mode-note').textContent = cur.hint + (cur.key === 'color' ? '' : ' ' + ui.modelStatusText());
+  }
+  ui.renderModes = renderModes;
+
   function renderThumbs() {
     const box = $('thumbs'); box.textContent = '';
     box.hidden = !draft.photos.length;
@@ -152,6 +178,7 @@
     if (!files.length) return;
     ui.busy('Готую фото…'); await ui.tick();
     let failed = 0, skipped = 0;
+    if (ui.settings.mode !== 'color' && BS.analyzer.modelSupported() && BS.model.state.status !== 'ready') BS.model.load().then(renderModes, renderModes);
     for (const f of files) {
       if (draft.photos.length >= MAX_PHOTOS) { skipped++; continue; }
       try { await addCanvas(await BS.decodeToCanvas(f, BS.STORE_SIDE)); } catch (e) { console.warn(e); failed++; }
@@ -181,7 +208,8 @@
     const settings = BS.cloneSettings(ui.settings);
     try {
       for (let i = 0; i < photos.length; i++) {
-        ui.busy(photos.length > 1 ? 'Аналізую фото ' + (i + 1) + ' з ' + photos.length + '…' : 'Аналізую фото…');
+        const loading = settings.mode !== 'color' && BS.analyzer.modelSupported() && BS.model.state.status !== 'ready';
+        ui.busy((loading ? 'Завантажую модель і аналізую' : 'Аналізую') + (photos.length > 1 ? ' фото ' + (i + 1) + ' з ' + photos.length + '…' : ' фото…'));
         await ui.tick();
         await ui.runPhoto(photos[i], settings);
       }
@@ -196,6 +224,7 @@
       draft.photos = []; renderThumbs();
       ['m-batch', 'm-note'].forEach((id) => { $(id).value = ''; });   // постачальник і оператор зазвичай ті самі
       ui.busy(false);
+      renderModes();
       ui.openBatch(batch);
     } catch (e) {
       console.error(e); ui.busy(false);
@@ -221,7 +250,9 @@
   }
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
-  ui.onShow.new = renderProfiles;
+  ui.onShow.new = () => { renderProfiles(); renderModes(); };
   renderProfiles();
+  renderModes();
+  if (ui.settings.mode !== 'color' && BS.analyzer.modelSupported()) BS.model.load().then(renderModes, renderModes);
   renderThumbs();
 })();

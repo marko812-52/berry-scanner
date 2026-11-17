@@ -205,7 +205,7 @@ def do_custom(long_side: int = 1024, tile: int = 512) -> list[dict]:
     metas = []
     if not CUSTOM.exists():
         return metas
-    for p in sorted(q for q in CUSTOM.rglob("*") if q.suffix.lower() in IMAGE_EXT and not q.name.endswith(".preview.jpg")):
+    for p in sorted(q for q in CUSTOM.rglob("*") if q.suffix.lower() in (".jpg", ".jpeg") and ".label." not in q.name and ".preview." not in q.name):
         lab_path = p.with_name(p.stem + ".label.png")
         img = imread(p)
         if img is None or not lab_path.exists():
@@ -219,7 +219,7 @@ def do_custom(long_side: int = 1024, tile: int = 512) -> list[dict]:
         for y0 in list(range(0, max(1, h - tile + 1), tile // 2)):
             for x0 in list(range(0, max(1, w - tile + 1), tile // 2)):
                 metas.append(save("train", f"custom_{p.stem}_{n}", img[y0:y0 + tile, x0:x0 + tile], lbl[y0:y0 + tile, x0:x0 + tile],
-                                  {"source": "custom", "species": "blackberry", "kind": "dense", "synthetic": False, "origin": p.name}))
+                                  {"source": "custom", "species": p.parent.name if p.parent.name in ("blueberry", "raspberry", "strawberry") else "blackberry", "kind": "dense", "synthetic": False, "origin": p.name}))
                 n += 1
     return metas
 

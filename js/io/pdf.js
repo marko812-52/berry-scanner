@@ -187,4 +187,74 @@
     }
     return doc;
   };
+
+  // PDF аналітики: фільтри, підсумки, графік, «програма vs людина», таблиця партій.
+  // data: { rows, cmp, filters, chart: { dataUrl, w, h } } — див. js/ui/stats.js
+  BS.buildStatsPdf = function (data) {
+    var doc = new jspdf.jsPDF({ unit: 'mm', format: 'a4', compress: true });
+    doc.addFileToVFS('NotoSans-Regular.ttf', BS_FONTS.regular); doc.addFont('NotoSans-Regular.ttf', 'NotoSans', 'normal');
+    doc.addFileToVFS('NotoSans-Bold.ttf', BS_FONTS.bold); doc.addFont('NotoSans-Bold.ttf', 'NotoSans', 'bold');
+    function font(size, bold, color) { doc.setFont('NotoSans', bold ? 'bold' : 'normal'); doc.setFontSize(size); var c = color || [29, 23, 34]; doc.setTextColor(c[0], c[1], c[2]); }
+    function p1(v) { return v == null || !isFinite(v) ? '—' : BS.fmtPct(v); }
+    var rows = data.rows, y;
+    doc.setFillColor(74, 29, 94); doc.rect(0, 0, W, 22, 'F');
+    font(16, true, [255, 255, 255]); doc.text('Аналітика партій', M, 11);
+    font(9, false, [232, 220, 240]); doc.text('Фільтр: ' + data.filters + ' · партій: ' + rows.length, M, 17.5);
+    font(9, true, [255, 255, 255]); doc.text(BS.fmtDate(Date.now()), W - M, 11, { align: 'right' });
+    y = 30;
+    var mean = function (a) { return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : null; };
+    var rej = rows.filter(function (r) { return r.verdict === 'reject'; }).length;
+    var tiles = [['Партій', String(rows.length)], ['Пліснява, середня', p1(mean(rows.map(function (r) { return r.p.mold; }))) + ' %'],
+      ['Недостиглі, середня', p1(mean(rows.map(function (r) { return r.p.unripe; }))) + ' %'], ['Відхилено', p1(rows.length ? 100 * rej / rows.length : 0) + ' %']];
+    var tw = (W - 2 * M - 9) / 4;
+    tiles.forEach(function (t, i) {
+      var x = M + i * (tw + 3);
+      doc.setFillColor(245, 242, 247); doc.roundedRect(x, y, tw, 16, 2, 2, 'F');
+      font(8, false, [106, 98, 114]); doc.text(t[0], x + 3, y + 5);
+      font(13, true); doc.text(t[1], x + 3, y + 12.5);
+    });
+    y += 21;
+    font(11, true); doc.text('Тренд по партіях', M, y + 4); y += 6;
+    var cw = W - 2 * M, ch = cw * data.chart.h / data.chart.w;
+    doc.addImage(data.chart.dataUrl, 'PNG', M, y, cw, ch, undefined, 'FAST'); y += ch + 2;
+    font(8, false, [106, 98, 114]); doc.text('Червона — пліснява, жовта — недостиглі, помаранчева — пошкоджені; пунктир — поріг плісняви для заморожування.', M, y + 3); y += 8;
+
+    var c = data.cmp;
+    font(11, true); doc.text('Програма проти сортувальника', M, y + 4); y += 7;
+    if (!c.n) { font(9.5, false, [64, 56, 74]); doc.text('Партій з оцінкою людини немає.', M, y + 3.5); y += 8; }
+    else {
+      font(9.5, false, [64, 56, 74]);
+      var lines = ['Партій з оцінкою людини: ' + c.n + '. Вердикт збігся: ' + p1(100 * c.verdictAgree) + ' %.',
+        'Пропущена пліснява (людина бачить щонайменше на 0,5 п.п. більше): ' + p1(100 * c.moldMissedShare) + ' % партій, у середньому ' + p1(c.moldMissedMean) + ' п.п., найбільше ' + p1(c.moldMissedMax) + ' п.п.',
+        'Середня похибка |програма − людина|, п.п.: ' + BS.CATEGORIES.map(function (k) { return k.label.toLowerCase() + ' ' + p1(c.mae[k.key]); }).join('; ') + '.'];
+      lines.forEach(function (t) { var ls = doc.splitTextToSize(t, W - 2 * M); doc.text(ls, M, y + 3.5); y += ls.length * 4.6 + 1; });
+      y += 2;
+    }
+
+    font(11, true); doc.text('Партії', M, y + 4); y += 7;
+    var cols = [['Дата', 30], ['Постачальник', 38], ['№', 18], ['Вердикт', 34], ['Пліснява', 16], ['Недост.', 15], ['Пошк.', 13], ['Дом.', 12], ['Людина: плісн.', 16]];
+    function header() {
+      doc.setFillColor(236, 232, 240); doc.rect(M, y, W - 2 * M, 6, 'F');
+      font(7.5, true); var x = M + 1;
+      cols.forEach(function (cdef) { doc.text(cdef[0], x, y + 4.2); x += cdef[1]; });
+      y += 7;
+    }
+    header();
+    rows.slice().reverse().forEach(function (r) {
+      if (y > H - 20) { doc.addPage(); y = 16; header(); }
+      font(7.5, false);
+      var vals = [r.date, r.supplier || '—', r.batchNo || '—', BS.VERDICTS[r.verdict].short, p1(r.p.mold), p1(r.p.unripe), p1(r.p.damaged), p1(r.p.debris), r.human ? p1(r.human.mold) : '—'];
+      var x = M + 1;
+      vals.forEach(function (v, i) { doc.text(doc.splitTextToSize(String(v), cols[i][1] - 1.5)[0], x, y + 3.2); x += cols[i][1]; });
+      doc.setDrawColor(236, 232, 240); doc.setLineWidth(0.2); doc.line(M, y + 4.8, W - M, y + 4.8);
+      y += 5.4;
+    });
+    var pages = doc.getNumberOfPages();
+    for (var n = 1; n <= pages; n++) {
+      doc.setPage(n); font(8, false, [140, 132, 148]);
+      doc.text('Сканер ягід ' + BS.APP_VERSION + ' · частки — площа ягід на фото, орієнтовно; пороги — демо-значення', M, H - 8);
+      doc.text('Сторінка ' + n + ' з ' + pages, W - M, H - 8, { align: 'right' });
+    }
+    return doc;
+  };
 })();

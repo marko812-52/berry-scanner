@@ -90,6 +90,9 @@
       : (navigator.serviceWorker && navigator.serviceWorker.controller ? 'готовий' : 'вмикається після першого відкриття');
     $('set-about').textContent = 'Версія ' + BS.APP_VERSION + ' · алгоритм ' + BS.ALGO_VERSION + ' · офлайн-режим: ' + offline + '.';
 
+    $('set-model').textContent = ui.modelStatusText() + ' Поточний спосіб: ' + BS.modeLabel(ui.settings.mode).toLowerCase() + '.';
+    $('set-model-load').hidden = !BS.analyzer.modelSupported() || BS.model.state.status === 'ready';
+
     const st = $('set-storage'); st.textContent = '';
     BS.db.listBatches().then((list) => {
       let text = 'Партій в історії: ' + list.length + '.';
@@ -101,6 +104,12 @@
   }
   ui.onShow.settings = render;
 
+  $('set-model-load').addEventListener('click', async () => {
+    ui.busy('Завантажую модель…');
+    try { await BS.model.load(); ui.toast('Модель завантажено: тепер працює без інтернету'); }
+    catch (e) { ui.toast('Не вдалося завантажити модель: ' + e.message, 6000); }
+    ui.busy(false); render();
+  });
   $('set-reset').addEventListener('click', () => {
     if (!confirm('Повернути всі налаштування до демо-значень?')) return;
     const keep = { profile: ui.settings.profile, mode: ui.settings.mode };

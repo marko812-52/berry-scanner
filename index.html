@@ -32,6 +32,9 @@
         <h3>Ягода</h3>
         <div id="profile-seg" class="seg seg-4" role="radiogroup" aria-label="Вид ягоди"></div>
         <p id="profile-note" class="note" hidden></p>
+        <h3 style="margin-top:14px">Спосіб аналізу</h3>
+        <div id="mode-seg" class="seg" role="radiogroup" aria-label="Спосіб аналізу"></div>
+        <p id="mode-note" class="note"></p>
       </div>
 
       <details class="card details" id="tips">
@@ -155,12 +158,31 @@
       <p class="note">Історія зберігається лише в цьому браузері на цьому пристрої. Експорт містить фото, результати й виправлення — для резервної копії та майбутнього навчання.</p>
     </section>
 
+    <!-- Аналітика -->
+    <section id="view-stats" class="view" hidden>
+      <h2>Аналітика</h2>
+      <div id="stats-filters" class="card"></div>
+      <div id="stats-body" class="stack"></div>
+      <div class="actions">
+        <button id="stats-xlsx" class="btn big" type="button">Excel (.xlsx)</button>
+        <button id="stats-csv" class="btn big" type="button">CSV</button>
+        <button id="stats-pdf" class="btn big" type="button">PDF</button>
+      </div>
+      <p class="note">Експорт містить партії за поточними фільтрами разом з оцінками сортувальника — для звітності й майбутнього донавчання.</p>
+    </section>
+
     <!-- Налаштування -->
     <section id="view-settings" class="view" hidden>
       <h2>Налаштування</h2>
       <div id="set-body"></div>
       <div class="actions">
         <button id="set-reset" class="btn big" type="button">Скинути до демо-значень</button>
+      </div>
+      <div class="card">
+        <h3>Навчена модель</h3>
+        <p id="set-model" class="muted"></p>
+        <button id="set-model-load" class="btn small" type="button">Завантажити модель зараз</button>
+        <p class="note">Модель потрібна для режимів «Гібрид» і «Модель». Завантажується один раз (близько 16 МБ разом із рушієм) і далі працює без інтернету.</p>
       </div>
       <div class="card">
         <h3>Дані на пристрої</h3>
@@ -184,6 +206,10 @@
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-2.05-4.95L14 10h7V3l-2.62 2.62A8.96 8.96 0 0 0 12 3Zm-1 5v5l4.2 2.5.8-1.3-3.5-2.1V8H11Z"/></svg>
       Історія
     </button>
+    <button type="button" data-view="stats">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16v2H2V2h2v18Zm3-3h3v-6H7v6Zm5 0h3V7h-3v10Zm5 0h3v-9h-3v9Z"/></svg>
+      Аналітика
+    </button>
     <button type="button" data-view="settings">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m19.4 13 .1-1-.1-1 2.1-1.6-2-3.5-2.5 1a7.6 7.6 0 0 0-1.7-1L15 3.2h-4l-.4 2.7c-.6.2-1.2.6-1.7 1l-2.5-1-2 3.5L6.6 11l-.1 1 .1 1-2.1 1.6 2 3.5 2.5-1c.5.4 1.1.8 1.7 1l.4 2.7h4l.4-2.7c.6-.2 1.2-.6 1.7-1l2.5 1 2-3.5-2.3-1.6ZM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
       Налаштування
@@ -202,6 +228,7 @@
   <script src="js/core/segment.js"></script>
   <script src="js/core/verdict.js"></script>
   <script src="js/core/analyzer.js"></script>
+  <script src="js/ml/model.js"></script>
   <script src="js/io/image.js"></script>
   <script src="js/io/db.js"></script>
   <script src="js/io/pdf.js"></script>
@@ -210,5 +237,6 @@
   <script src="js/ui/result.js"></script>
   <script src="js/ui/history.js"></script>
   <script src="js/ui/settings.js"></script>
+  <script src="js/ui/stats.js"></script>
 </body>
 </html>

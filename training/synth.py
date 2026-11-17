@@ -22,22 +22,28 @@ IMAGE_EXT = (".jpg", ".jpeg", ".png")
 # Ягоди-«спрайти»: фото однієї ягоди на білому тлі → колір + маска
 # ---------------------------------------------------------------------------------------------
 def cut_from_white(bgr: np.ndarray) -> np.ndarray | None:
-    """Маска об'єкта на білому тлі (0..1) або None, якщо вирізати не вдалося."""
+    """Маска об'єкта на білому тлі (0..1) або None, якщо вирізати не вдалося.
+
+    Фон — світлі ненасичені пікселі (біле тло й сіра тінь), зв'язані з краєм кадру. Звичайна заливка від країв
+    «просочується» через плавну тінь і відблиск усередину ягоди, тому вона тут не годиться.
+    """
     h, w = bgr.shape[:2]
-    blur = cv2.GaussianBlur(bgr, (3, 3), 0)
-    mask = np.zeros((h + 2, w + 2), np.uint8)
-    work = blur.copy()
-    for seed in ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1), (w // 2, 0), (w // 2, h - 1), (0, h // 2), (w - 1, h // 2)):
-        if min(int(v) for v in work[seed[1], seed[0]]) < 200:
-            continue                                    # кут не білий — звідси не заливаємо
-        cv2.floodFill(work, mask, seed, (0, 0, 0), (9, 9, 9), (9, 9, 9), 4 | cv2.FLOODFILL_MASK_ONLY | (255 << 8))
-    fg = (mask[1:-1, 1:-1] == 0).astype(np.uint8)
+    hsv = cv2.cvtColor(cv2.GaussianBlur(bgr, (3, 3), 0), cv2.COLOR_BGR2HSV)
+    cand = ((hsv[..., 1] < 45) & (hsv[..., 2] > 110)).astype(np.uint8)
+    _, lab = cv2.connectedComponents(cand, connectivity=4)
+    border = set(np.unique(np.concatenate([lab[0], lab[-1], lab[:, 0], lab[:, -1]]))) - {0}
+    fg = (~np.isin(lab, list(border))).astype(np.uint8)
     fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     n, lab, stats, _ = cv2.connectedComponentsWithStats(fg, 8)
     if n < 2:
         return None
     k = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
     fg = (lab == k).astype(np.uint8)
+    # дірки всередині (блики на ягоді) — теж ягода
+    inv = (1 - fg).astype(np.uint8)
+    _, lab2 = cv2.connectedComponents(inv, connectivity=4)
+    edge = set(np.unique(np.concatenate([lab2[0], lab2[-1], lab2[:, 0], lab2[:, -1]])))
+    fg[(~np.isin(lab2, list(edge))) & (inv > 0)] = 1
     area = float(fg.sum()) / (h * w)
     if area < 0.08 or area > 0.97:
         return None
@@ -89,6 +95,8 @@ class SpriteBank:
                 alpha = cut_from_white(bgr)
                 if alpha is None:
                     continue
+                if key[0] == "raspberry" and "fruits360" in p.parts:
+                    bgr = fix_purple(bgr)
                 out.append(crop_to_mask(bgr, alpha))
             if out:
                 self.items[key] = out
@@ -105,6 +113,18 @@ class SpriteBank:
         if label == UNRIPE:
             return recolor_unripe(bgr, species, rng), a
         return bgr.copy(), a
+
+
+def fix_purple(bgr: np.ndarray) -> np.ndarray:
+    """Малина у Fruits-360 знята з фіолетовим відтінком. Зсуваємо відтінок до червоного (це виправлення кольору, не розмітки)."""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.int32)
+    colored = hsv[..., 1] > 40
+    if not colored.any():
+        return bgr
+    med = int(np.median(hsv[..., 0][colored]))
+    hsv[..., 0] = (hsv[..., 0] + (176 - med)) % 180          # медіанний відтінок → 352°
+    hsv[..., 1] = np.clip(hsv[..., 1] * 1.15, 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
 
 def recolor_unripe(bgr: np.ndarray, species: str, rng: random.Random) -> np.ndarray:
@@ -254,12 +274,14 @@ def add_glare(img, lbl, rng: random.Random, rs: np.random.RandomState):
     berry = np.argwhere((lbl == GOOD) | (lbl == UNRIPE))
     if not len(berry):
         return
-    for _ in range(rng.randint(0, 500)):
+    for _ in range(rng.choice([0, 0, rng.randint(0, 80), rng.randint(0, 250)])):
         cy, cx = berry[rs.randint(len(berry))]
-        r = rng.choice([1, 1, 1, 2, 2, 3])
-        v = rng.uniform(170, 255)
-        cv2.circle(img, (int(cx), int(cy)), r, (v, v, v), -1, lineType=cv2.LINE_AA)
-    for _ in range(rng.randint(0, 6)):                # більші відблиски (мокра ягода)
+        v = rng.uniform(150, 255)
+        if rng.random() < 0.8:
+            img[cy, cx] = img[cy, cx] * 0.3 + v * 0.7             # цятка в один піксель
+        else:
+            cv2.circle(img, (int(cx), int(cy)), 1, (v, v, v), -1, lineType=cv2.LINE_AA)
+    for _ in range(rng.choice([0, 0, 0, rng.randint(1, 5)])):                # більші відблиски (мокра ягода)
         cy, cx = berry[rs.randint(len(berry))]
         cv2.ellipse(img, (int(cx), int(cy)), (rng.randint(3, 7), rng.randint(2, 4)), rng.uniform(0, 180), 0, 360, (250, 250, 250), -1, lineType=cv2.LINE_AA)
 
