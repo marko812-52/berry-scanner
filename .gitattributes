@@ -1,0 +1,6 @@
+# Двійкові файли: git не повинен змінювати в них переноси рядків
+*.wasm binary
+*.onnx binary
+*.png binary
+*.jpg binary
+*.pdf binary

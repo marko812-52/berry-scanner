@@ -119,7 +119,9 @@
     score = Math.round(Math.max(5, Math.min(MAX_SCORE, score)));
     var level = score >= cf.high ? 'high' : score >= cf.low ? 'medium' : 'low';
     var minPhoto = perPhoto.length ? Math.min.apply(null, perPhoto.map(function (x) { return x.score; })) : 0;
-    var needsReview = !found || score < cf.low || near || minPhoto < cf.low;
+    // розбіжність кольору й моделі щодо плісняви або невпевнена модель — завжди до людини
+    var flagged = issues.some(function (i) { return i.code === 'disagree' || i.code === 'model-unsure'; });
+    var needsReview = !found || score < cf.low || near || minPhoto < cf.low || flagged;
 
     return {
       percents: percents,

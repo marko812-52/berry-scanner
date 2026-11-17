@@ -308,7 +308,7 @@ test('збережені налаштування доповнюються ст�
   assert.equal(m.color.moldValMin, S.color.moldValMin);
   assert.equal(m.verdict.bogus, undefined);
   assert.equal(m.profile, 'raspberry');
-  assert.equal(m.mode, 'color');
+  assert.equal(m.mode, S.mode, 'невідомий режим → стандартний');
   assert.equal(BS.mergeSettings({ profile: 'кавун' }).profile, 'blackberry');
 });
 

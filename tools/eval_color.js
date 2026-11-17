@@ -3,7 +3,8 @@
  * Проганяє кольоровий метод (той самий код, що в браузері) на підготовлених даних для порівняння з моделлю.
  *   node tools/eval_color.js [test|val]
  * Читає datasets/prepared/<split>/meta.jsonl, пише datasets/eval/color/<split>/<ім'я>.png — карта класів
- * єдиної таксономії (0 фон, 1..5), де «поза зоною» і «фон / інше» = 0. Профіль ягоди береться з meta.
+ * кольорового методу як є: 0 поза зоною, 1..5 категорії, 6 «фон / інше» (оцінка зводить 6 до фону;
+ * гібриду потрібна різниця між «поза зоною» і «фон / інше»). Профіль ягоди береться з meta.
  */
 'use strict';
 const fs = require('fs');
@@ -47,7 +48,7 @@ meta.forEach((m, i) => {
   const r = BS.analyze(img.data, img.w, img.h, settings, opts);
   if (r.w !== img.w || r.h !== img.h) throw new Error('розмір змінився: ' + m.file);
   const lab = new Uint8Array(r.labels.length);
-  for (let k = 0; k < lab.length; k++) { const v = r.labels[k]; lab[k] = v === BS.CLASSES.OTHER ? 0 : v; }
+  for (let k = 0; k < lab.length; k++) lab[k] = r.labels[k];
   writeGrayPng(path.join(out, m.file + '.png'), lab, r.w, r.h);
   summary[m.file] = { percents: r.percents, berryFraction: r.berryFraction, moldSpots: r.moldSpots };
   if ((i + 1) % 200 === 0) console.log(`${i + 1}/${meta.length} · ${((Date.now() - t0) / 1000).toFixed(0)} с`);

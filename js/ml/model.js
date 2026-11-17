@@ -28,6 +28,29 @@
     });
   }
 
+  /*
+   * Кладе рушій і модель у кеш для офлайну (той самий кеш, що й у sw.js). Потрібно, бо при першому відкритті
+   * сторінки service worker ще може не контролювати її — тоді запити йдуть повз нього і не кешуються.
+   * Модель кладеться з уже завантажених байтів; файли рушія беруться з HTTP-кешу браузера (без повторного качання).
+   */
+  var MODEL_CACHE = 'berry-scanner-models';
+  function keepOffline(buf) {
+    if (!root.caches || !state.info) return;
+    var abs = function (u) { return new URL(u, location.href).href; };
+    var modelUrl = abs(MODEL_DIR + state.info.file + '?v=' + encodeURIComponent(state.info.version));
+    var files = ['ort.wasm.min.js', 'ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm'].map(function (f) { return abs(ORT_DIR + f); });
+    root.caches.open(MODEL_CACHE).then(function (cache) {
+      return cache.keys().then(function (keys) {
+        // старі версії моделі — геть
+        keys.forEach(function (k) { if (k.url.split('?')[0] === modelUrl.split('?')[0] && k.url !== modelUrl) cache.delete(k); });
+        var jobs = [cache.put(modelUrl, new Response(buf, { headers: { 'Content-Type': 'application/octet-stream' } }))];
+        jobs.push(cache.put(abs(MODEL_DIR + 'berry-seg.json'), new Response(JSON.stringify(state.info), { headers: { 'Content-Type': 'application/json' } })));
+        files.forEach(function (u) { jobs.push(cache.match(u).then(function (hit) { return hit || cache.add(u); })); });
+        return Promise.all(jobs);
+      });
+    }).then(function () { state.offline = true; }, function (e) { if (root.console) root.console.warn('Модель не збережено для офлайну', e); });
+  }
+
   BS.model = {
     state: state,
 
@@ -56,7 +79,10 @@
           });
         })
         .then(function (r) { if (!r.ok) throw new Error('Не вдалося завантажити файл моделі'); return r.arrayBuffer(); })
-        .then(function (buf) { return root.ort.InferenceSession.create(new Uint8Array(buf), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' }); })
+        .then(function (buf) {
+          keepOffline(buf);
+          return root.ort.InferenceSession.create(new Uint8Array(buf), { executionProviders: ['wasm'], graphOptimizationLevel: 'all' });
+        })
         .then(function (session) {
           state.session = session; state.status = 'ready'; state.loadMs = Date.now() - t0;
           return state.info;
@@ -96,7 +122,7 @@
           if (sl) { var smx = Math.max.apply(null, sl), ss = 0; sp = sl.map(function (v) { var e = Math.exp(v - smx); ss += e; return e; }).map(function (v) { return v / ss; }); }
           state.lastMs = Date.now() - t0;
           return { prob: prob, gw: gw, gh: gh, w: w, h: h, stride: info.stride || 4, species: sp, speciesHint: info.species_hint === true,
-            speciesKeys: info.species, version: info.version, ms: state.lastMs };
+            speciesKeys: info.species, damagedProfiles: info.damaged_profiles || ['strawberry'], version: info.version, ms: state.lastMs };
         });
       });
     },
@@ -104,13 +130,15 @@
     /*
      * Поєднання з кольоровим методом. color — результат BS.analyze для того самого фото (той самий розмір w×h).
      *   model  — клас кожного пікселя від моделі; ручна зона, якщо є, обмежує аналіз;
-     *   hybrid — основа — кольоровий метод; модель (1) знімає «плісняву», яку вважає бліком чи фоном,
+     *   hybrid — основа — кольоровий метод; модель (1) знімає «плісняву», де впевнено бачить фон (стіна, папір),
      *            (2) додає плісняву, яку колір пропустив (сірий наліт), (3) додає «пошкоджені», яких колір не бачить.
      */
     combine: function (color, pred, mode, settings) {
       var w = color.w, h = color.h, n = w * h, cl = color.labels, gw = pred.gw, gh = pred.gh, st = pred.stride, gn = gw * gh;
       if (pred.w !== w || pred.h !== h) throw new Error('Розмір аналізу моделі й кольорового методу різний');
       var labels = new Uint8Array(n), pm = new Float32Array(NC), i, x, y, k, maxSum = 0, maxN = 0, modelMold = 0, modelBerry = 0;
+      // «пошкоджені» модель бачила лише для деяких ягід (див. models/berry-seg.json); для решти цей клас їй не довіряємо
+      var damagedOK = (pred.damagedProfiles || ['strawberry']).indexOf(color.profile) >= 0;
       for (y = 0; y < h; y++) {
         // білінійна інтерполяція ймовірностей між центрами клітинок
         var fy = (y + 0.5) / st - 0.5, y0 = Math.max(0, Math.floor(fy)), y1 = Math.min(gh - 1, y0 + 1), ty = Math.min(1, Math.max(0, fy - y0));
@@ -122,6 +150,10 @@
             pm[k] = (pr[o + a00] * (1 - tx) + pr[o + a01] * tx) * (1 - ty) + (pr[o + a10] * (1 - tx) + pr[o + a11] * tx) * ty;
             if (pm[k] > pm[best]) best = k;
           }
+          if (!damagedOK && best === C.DAMAGED) {                      // друге за ймовірністю
+            pm[C.DAMAGED] = 0; best = 0;
+            for (k = 1; k < NC; k++) if (pm[k] > pm[best]) best = k;
+          }
           i = y * w + x;
           var c = cl[i], inZone = c !== C.OUT, lab;
           if (mode === 'model') {
@@ -130,9 +162,11 @@
           } else {
             lab = c;
             if (inZone) {
-              if (c === C.MOLD && pm[C.MOLD] < 0.2) lab = pm[0] > 0.5 ? C.OTHER : C.GOOD;
+              // пропуск плісняви — найгірша помилка: модель знімає плісняву лише там, де впевнено бачить фон
+              // (стіна, папір, дно лотка), і ніколи не перетворює її на «якісну»
+              if (c === C.MOLD && pm[0] > 0.6 && pm[C.MOLD] < 0.15) lab = C.OTHER;
               else if (c !== C.MOLD && c !== C.OTHER && pm[C.MOLD] > 0.6) lab = C.MOLD;
-              else if (c === C.GOOD && pm[C.DAMAGED] > 0.55) lab = C.DAMAGED;
+              else if (damagedOK && c === C.GOOD && pm[C.DAMAGED] > 0.55) lab = C.DAMAGED;
             }
           }
           labels[i] = lab;

@@ -12,9 +12,10 @@ require('../js/ml/model.js');
 const C = BS.CLASSES, S = BS.DEFAULT_SETTINGS;
 const root = path.join(__dirname, '..');
 
-function scene(w, h) {
+function scene(w, h, c) {
+  c = c || [30, 22, 35];
   const d = new Uint8ClampedArray(w * h * 4);
-  for (let i = 0; i < w * h; i++) { const j = ((i * 7919) % 13) - 6; d[i * 4] = 30 + j; d[i * 4 + 1] = 22 + j; d[i * 4 + 2] = 35 + j; d[i * 4 + 3] = 255; }
+  for (let i = 0; i < w * h; i++) { const j = ((i * 7919) % 13) - 6; d[i * 4] = c[0] + j; d[i * 4 + 1] = c[1] + j; d[i * 4 + 2] = c[2] + j; d[i * 4 + 3] = 255; }
   return d;
 }
 function mold(d, w, cx, cy, r) {
@@ -41,10 +42,12 @@ test('гібрид: модель знімає «плісняву», яку вв�
   const w = 640, h = 480, d = scene(w, h);
   mold(d, w, 160, 240, 14);                     // колір: пліснява; модель: фон → «фон / інше»
   mold(d, w, 480, 240, 14);                     // колір: пліснява; модель: пліснява → лишається
+  mold(d, w, 320, 380, 14);                     // колір: пліснява; модель: «якісна» → пліснява лишається (пропуск гірший)
   const color = BS.analyze(d, w, h, S);
-  assert.equal(color.moldSpots, 2);
+  assert.equal(color.moldSpots, 3);
   const pred = fakePred(w, h, [
     { x: 160, y: 240, r: 20, p: [0.9, 0.04, 0.01, 0.01, 0.02, 0.02] },
+    { x: 320, y: 380, r: 20, p: [0.02, 0.9, 0.02, 0.02, 0.02, 0.02] },   // модель «не бачить» плісняву, але й фону не бачить
     { x: 480, y: 240, r: 20, p: [0.02, 0.1, 0.01, 0.01, 0.85, 0.01] },
     { x: 320, y: 100, r: 12, p: [0.02, 0.1, 0.01, 0.01, 0.85, 0.01] }   // сірий наліт, який колір пропустив
   ]);
@@ -53,17 +56,23 @@ test('гібрид: модель знімає «плісняву», яку вв�
   assert.equal(at(r, 160, 240), C.OTHER);
   assert.equal(at(r, 480, 240), C.MOLD);
   assert.equal(at(r, 320, 100), C.MOLD);
-  assert.equal(r.moldSpots, 2);
+  assert.equal(at(r, 320, 380), C.MOLD, "модель не знімає плісняву, якщо не бачить там фону");
+  assert.equal(r.moldSpots, 3);
   assert.ok(Math.abs(Object.values(r.percents).reduce((a, b) => a + b, 0) - 100) < 1e-6);
   assert.equal(r.modelVersion, 'test');
   assert.ok(r.modelConfidence > 0.8);
 });
 
-test('гібрид: «пошкоджені» береться з моделі', () => {
-  const w = 320, h = 240, d = scene(w, h), color = BS.analyze(d, w, h, S);
-  const r = BS.model.combine(color, fakePred(w, h, [{ x: 160, y: 120, r: 30, p: [0.02, 0.2, 0.02, 0.7, 0.03, 0.03] }]), 'hybrid', S);
+test('гібрид: «пошкоджені» береться з моделі лише для ягід, де вона їх бачила в навчанні', () => {
+  const w = 320, h = 240, d = scene(w, h), disc = [{ x: 160, y: 120, r: 30, p: [0.02, 0.2, 0.02, 0.7, 0.03, 0.03] }];
+  const straw = BS.analyze(scene(w, h, [200, 35, 40]), w, h, Object.assign(BS.cloneSettings(S), { profile: 'strawberry' }));
+  const r = BS.model.combine(straw, fakePred(w, h, disc), 'hybrid', S);
   assert.equal(at(r, 160, 120), C.DAMAGED);
   assert.ok(r.percents.damaged > 3);
+  const black = BS.model.combine(BS.analyze(d, w, h, S), fakePred(w, h, disc), 'hybrid', S);
+  assert.equal(black.percents.damaged, 0, 'для ожини модель «пошкоджених» не бачила');
+  const m = BS.model.combine(BS.analyze(d, w, h, S), fakePred(w, h, disc), 'model', S);
+  assert.equal(at(m, 160, 120), C.GOOD, 'режим «Модель»: замість «пошкоджених» — другий за ймовірністю клас');
 });
 
 test('модель: клас кожного пікселя від моделі, ручна зона обмежує', () => {
@@ -92,6 +101,7 @@ test('розбіжність кольорового методу й моделі
   const r = BS.model.combine(color, fakePred(w, h, [{ x: 160, y: 120, r: 40, p: [0.02, 0.1, 0.01, 0.01, 0.85, 0.01] }]), 'model', S);
   const ev = BS.evaluateBatch([r], S);
   assert.ok(ev.issues.some((i) => i.code === 'disagree'), JSON.stringify(ev.issues));
+  assert.ok(ev.needsReview, 'розбіжність щодо плісняви — завжди до людини');
 });
 
 test('без моделі (сторінка як файл, Node) — відкат на кольоровий метод із позначкою', async () => {
@@ -101,7 +111,7 @@ test('без моделі (сторінка як файл, Node) — відка�
   assert.equal(r.requestedMode, 'hybrid');
   assert.ok(r.fallback);
   assert.ok(BS.evaluateBatch([r], S).issues.some((i) => i.code === 'fallback'));
-  const c = await BS.analyzer.run(d, w, h, S);
+  const c = await BS.analyzer.run(d, w, h, Object.assign(BS.cloneSettings(S), { mode: 'color' }));
   assert.equal(c.fallback, undefined);
 });
 

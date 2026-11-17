@@ -108,11 +108,29 @@ class SpriteBank:
         """Ягода потрібного виду й класу. Якщо реальних «недостиглих» немає — перефарбована якісна."""
         if (species, label) in self.items:
             bgr, a = rng.choice(self.items[(species, label)])
+            if species == "blackberry" and label == GOOD and rng.random() < 0.75:
+                return tint_blackberry(bgr, rng), a
             return bgr.copy(), a
         bgr, a = rng.choice(self.items[(species, GOOD)])
         if label == UNRIPE:
             return recolor_unripe(bgr, species, rng), a
         return bgr.copy(), a
+
+
+def tint_blackberry(bgr: np.ndarray, rng: random.Random) -> np.ndarray:
+    """Стигла ожина в лотку має пурпуровий відблиск і світліша за майже чорні фото Fruits-360
+    (виміряно: на реальному фото 54 % кольорових пікселів мають відтінок 280–360°, медіана яскравості 0,13;
+    у Fruits-360 — 2 % і 0,06). Підфарбовуємо в цих межах, клас лишається «якісна»."""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)          # H 0..180
+    hue = rng.uniform(140, 178)                                             # 280..356°
+    jitter = np.random.RandomState(rng.randint(0, 2 ** 31 - 1)).uniform(-6, 6, hsv.shape[:2])
+    share = rng.uniform(0.5, 0.95)                                          # частка пікселів із відтінком
+    mask = np.random.RandomState(rng.randint(0, 2 ** 31 - 1)).rand(*hsv.shape[:2]) < share
+    mask = cv2.GaussianBlur(mask.astype(np.float32), (0, 0), 2.0) > 0.5
+    hsv[..., 0] = np.where(mask, (hue + jitter) % 180, hsv[..., 0])
+    hsv[..., 1] = np.clip(hsv[..., 1] * rng.uniform(0.35, 0.75), 0, 255)
+    hsv[..., 2] = np.clip(hsv[..., 2] * rng.uniform(1.6, 2.8), 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
 
 def fix_purple(bgr: np.ndarray) -> np.ndarray:

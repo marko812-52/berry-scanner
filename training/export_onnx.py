@@ -62,6 +62,8 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="v1")
     ap.add_argument("--version", default=None, help="рядок версії моделі для звіту (типово model-<run>)")
+    ap.add_argument("--species-hint", action="store_true", help="увімкнути підказку виду ягоди в інтерфейсі")
+    ap.add_argument("--precision", choices=["auto", "int8", "float32"], default="auto")
     a = ap.parse_args()
     run_dir = ROOT / "runs" / a.run
     ck = torch.load(run_dir / "best.pt", map_location="cpu", weights_only=False)
@@ -97,7 +99,7 @@ def main() -> None:
             mold_agree.append(float(((p32 == 4) == (p8 == 4))[m].mean()))
     ag, mag = float(np.mean(agree)), float(np.mean(mold_agree)) if mold_agree else 1.0
     print(f"збіг int8 з float32: {100 * ag:.1f} % пікселів, пліснява {100 * mag:.1f} % · CPU на 768×768: float32 {1000 * t32 / 40:.0f} мс, int8 {1000 * t8 / 40:.0f} мс")
-    use_int8 = ag >= 0.97 and mag >= 0.85
+    use_int8 = a.precision == "int8" or (a.precision == "auto" and ag >= 0.97 and mag >= 0.85)
     chosen = q8 if use_int8 else fp32
 
     MODELS.mkdir(exist_ok=True)
@@ -111,6 +113,10 @@ def main() -> None:
         "input": {"name": "image", "layout": "NCHW", "range": "0..1 RGB", "multiple": MULTIPLE, "long_side": 1024},
         "outputs": {"logits": f"N×{len(CLASSES)}×H/{STRIDE}×W/{STRIDE}", "species": f"N×{len(SPECIES)}"},
         "stride": STRIDE, "epoch": ck.get("epoch"), "val": ck.get("val"),
+        # для яких ягід модель бачила «пошкоджені» в навчанні (лише гнила полуниця) — для решти браузер цей клас ігнорує
+        "damaged_profiles": ["strawberry"],
+        # підказка виду ягоди в інтерфейсі: вмикається вручну після перевірки точності на реальних фото (EVALUATION.md)
+        "species_hint": a.species_hint,
         "quantization_check": {"pixel_agreement": round(ag, 4), "mold_agreement": round(mag, 4)},
         "exported_at": time.strftime("%Y-%m-%d %H:%M"),
     }

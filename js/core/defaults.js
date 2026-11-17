@@ -6,7 +6,7 @@
   'use strict';
   var BS = (root.BS = root.BS || {});
 
-  BS.APP_VERSION = '0.3.0';
+  BS.APP_VERSION = '0.4.0';
   // Змінюй при будь-якій зміні логіки сегментації: версія зберігається з кожною партією.
   BS.ALGO_VERSION = 'hsv-v1.0';
 
@@ -109,7 +109,7 @@
   // ДЕМО-ЗНАЧЕННЯ. Усі пороги вердикту треба уточнити з технологом.
   BS.DEFAULT_SETTINGS = {
     profile: 'blackberry',
-    mode: 'color',          // 'color' | 'model' | 'hybrid' — спосіб аналізу
+    mode: 'hybrid',         // 'color' | 'model' | 'hybrid' — спосіб аналізу (без моделі — автоматичний відкат на кольоровий)
     verdict: {
       freezeMold: 1.5,    // % плісняви, до якого партія йде на заморожування
       freezeUnripe: 8,    // % недостиглих
@@ -165,7 +165,7 @@
       }
     });
     if (!BS.PROFILES[out.profile]) out.profile = 'blackberry';
-    if (['color', 'model', 'hybrid'].indexOf(out.mode) < 0) out.mode = 'color';
+    if (['color', 'model', 'hybrid'].indexOf(out.mode) < 0) out.mode = BS.DEFAULT_SETTINGS.mode;
     return out;
   };
 

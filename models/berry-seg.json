@@ -1,0 +1,79 @@
+{
+ "version": "model-v2",
+ "file": "berry-seg.onnx",
+ "bytes": 3582965,
+ "precision": "float32",
+ "classes": [
+  "background",
+  "good",
+  "unripe",
+  "damaged",
+  "mold",
+  "debris"
+ ],
+ "labels_uk": [
+  "фон",
+  "якісна",
+  "недостигла",
+  "пошкоджена / гнила",
+  "пліснява",
+  "домішки / стороннє"
+ ],
+ "species": [
+  "blackberry",
+  "blueberry",
+  "raspberry",
+  "strawberry"
+ ],
+ "input": {
+  "name": "image",
+  "layout": "NCHW",
+  "range": "0..1 RGB",
+  "multiple": 32,
+  "long_side": 1024
+ },
+ "outputs": {
+  "logits": "N×6×H/4×W/4",
+  "species": "N×4"
+ },
+ "stride": 4,
+ "epoch": 25,
+ "val": {
+  "iou": [
+   0.9564341144857698,
+   0.8670630059494538,
+   0.5631801929438369,
+   0.6351520987372905,
+   0.5871929705699946,
+   0.5528675822817704
+  ],
+  "recall": [
+   0.9679135227528768,
+   0.9544002573260602,
+   0.7261813094904624,
+   0.8183652868958484,
+   0.8699915834665307,
+   0.6803306816409297
+  ],
+  "precision": [
+   0.987751703986719,
+   0.9045350965644945,
+   0.7150190861016323,
+   0.7393836588883144,
+   0.6436740896470561,
+   0.7468940775560179
+  ],
+  "miou": 0.6410911700964692,
+  "mold_recall": 0.8699915834665307,
+  "mold_precision": 0.6436740896470561
+ },
+ "damaged_profiles": [
+  "strawberry"
+ ],
+ "species_hint": true,
+ "quantization_check": {
+  "pixel_agreement": 0.7657,
+  "mold_agreement": 0.0
+ },
+ "exported_at": "2026-11-17 19:06"
+}

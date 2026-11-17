@@ -123,6 +123,25 @@ class Acc:
         }
 
 
+OTHER = 6             # «фон / інше» в карті кольорового методу
+
+
+def hybrid(color: np.ndarray, prob: np.ndarray, species: str | None) -> np.ndarray:
+    """Те саме правило, що js/ml/model.js (режим «Гібрид»): основа — кольоровий метод, модель його перевіряє."""
+    h, w = color.shape
+    t = torch.from_numpy(prob)[None]
+    p = F.interpolate(t, size=(-(-h // 4) * 4, -(-w // 4) * 4), mode="bilinear", align_corners=False)[0, :, :h, :w].numpy()
+    out = color.copy()
+    zone = color > 0
+    veto = zone & (color == MOLD) & (p[0] > 0.6) & (p[MOLD] < 0.15)
+    add = zone & (color != MOLD) & (color != OTHER) & (p[MOLD] > 0.6)
+    out[veto] = OTHER
+    out[add] = MOLD
+    if species == "strawberry":                              # «пошкоджені» модель бачила лише для полуниці
+        out[zone & ~add & (color == 1) & (p[DAMAGED] > 0.55)] = DAMAGED
+    return out
+
+
 def spot_count(mask: np.ndarray, min_area: int) -> int:
     n, _, st, _ = cv2.connectedComponentsWithStats(mask.astype(np.uint8), 8)
     return int((st[1:, cv2.CC_STAT_AREA] >= min_area).sum())
@@ -165,15 +184,21 @@ def main() -> None:
         if m.get("species") in SPECIES:
             species_hits.setdefault(g, []).append(int(SPECIES[int(sp.argmax())] == m["species"]))
         cpath = COLOR / a.split / f"{m['file']}.png"
-        cpred = cv2.imread(str(cpath), cv2.IMREAD_GRAYSCALE) if color_ok and cpath.exists() else None
+        craw = cv2.imread(str(cpath), cv2.IMREAD_GRAYSCALE) if color_ok and cpath.exists() else None
+        cpred = np.where(craw == OTHER, 0, craw).astype(np.uint8) if craw is not None else None
+        hpred = None
+        if craw is not None:
+            hp = hybrid(craw, prob, m.get("species"))
+            hpred = np.where(hp == OTHER, 0, hp).astype(np.uint8)
         if m["kind"] == "dense":
             gt = cv2.imread(str(DATA / a.split / f"{m['file']}.png"), cv2.IMREAD_GRAYSCALE)
             accs.setdefault((g, "model"), Acc()).add(gt, pred, rgb)
             if cpred is not None:
                 accs.setdefault((g, "color"), Acc()).add(gt, cpred, rgb)
+                accs.setdefault((g, "hybrid"), Acc()).add(gt, hpred, rgb)
         else:
             # мітка на все фото: частка плісняви / пошкоджених серед ягід
-            for name, lab in (("model", pred), ("color", cpred)):
+            for name, lab in (("model", pred), ("color", cpred), ("hybrid", hpred)):
                 if lab is None:
                     continue
                 berry = max(1, int((lab > 0).sum()))
@@ -207,6 +232,9 @@ def main() -> None:
     print(to_markdown(res))
 
 
+MNAME = {"color": "кольоровий", "hybrid": "гібрид", "model": "модель"}
+
+
 def fmt(v, pct=True) -> str:
     if v is None:
         return "—"
@@ -221,18 +249,19 @@ def to_markdown(res: dict) -> str:
         L.append("| Клас | Метод | Recall | Precision | IoU | Похибка частки, п.п. |")
         L.append("|---|---|---|---|---|---|")
         for c in range(1, NUM_CLASSES):
-            for method in ("model", "color"):
+            for method in ("color", "hybrid", "model"):
                 if method not in by:
                     continue
                 r = by[method]
                 p = r["pixels"][CLASSES[c]]
                 if not p["n_gt"] and not p["precision"]:
                     continue
-                L.append(f"| {LABELS_UK[c]} | {'модель' if method == 'model' else 'кольоровий'} | {fmt(p['recall'])} | {fmt(p['precision'])} | "
+                L.append(f"| {LABELS_UK[c]} | {MNAME[method]} | {fmt(p['recall'])} | {fmt(p['precision'])} | "
                          f"{fmt(p['iou'])} | {fmt(r['composition_mae_pp'][CLASSES[c]], False)} |")
         L.append("")
-        L.append("| Пліснява | " + " | ".join("модель" if m == "model" else "кольоровий" for m in by) + " |")
-        L.append("|---|" + "---|" * len(by))
+        order = [m for m in ("color", "hybrid", "model") if m in by]
+        L.append("| Пліснява | " + " | ".join(MNAME[m] for m in order) + " |")
+        L.append("|---|" + "---|" * len(order))
         rows = [("Плям плісняви знайдено (recall плям)", "mold_spot_recall", "mold_spots"),
                 ("Фото з пліснявою виявлено (recall фото)", "mold_image_recall", "mold_images"),
                 ("Фото без плісняви з хибною плямою", "false_mold_image_rate", "clean_images"),
@@ -240,7 +269,7 @@ def to_markdown(res: dict) -> str:
                 ("Фото з білими поверхнями, де є хибна пляма на білому", "false_mold_white_images", "white_images")]
         for title, key, nkey in rows:
             vals = []
-            for m in by:
+            for m in order:
                 v = by[m][key]
                 vals.append((f"{100 * v:.2f} %".replace(".", ",") if key == "false_mold_white_px" and v is not None else fmt(v)) +
                             (f" (n={by[m][nkey]})" if nkey else ""))
@@ -250,9 +279,12 @@ def to_markdown(res: dict) -> str:
         L.append("### SmartBerry (реальні фото полуниці, мітка на все фото)\n")
         L.append("| Клас фото | Метод | Фото | Частка фото з пліснявою > 1 % | Середня пліснява, % | Частка фото з пошкодженими > 5 % |")
         L.append("|---|---|---|---|---|---|")
-        for m, by in res["weak"].items():
-            for cls, v in sorted(by.items()):
-                L.append(f"| {cls} | {'модель' if m == 'model' else 'кольоровий'} | {v['n']} | {fmt(v['with_mold_over_1pct'])} | "
+        for cls in sorted(next(iter(res["weak"].values()))):
+            for m in ("color", "hybrid", "model"):
+                if m not in res["weak"] or cls not in res["weak"][m]:
+                    continue
+                v = res["weak"][m][cls]
+                L.append(f"| {cls} | {MNAME[m]} | {v['n']} | {fmt(v['with_mold_over_1pct'])} | "
                          f"{fmt(v['mean_mold_pct'] / 100)} | {fmt(v['with_damaged_over_5pct'])} |")
         L.append("")
     if res.get("species_accuracy"):
